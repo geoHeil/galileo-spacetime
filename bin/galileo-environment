@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+################################################################################
+# galileo-environment - ensures all Galileo environment variables are set up
+#                       correctly.
+#
+#                       GALILEO_HOME - the location of the Galileo install
+#                       directory.  This being configured is a minimum
+#                       requirement, but the script can also attempt to
+#                       automatically configure the variable.
+#
+#                       GALILEO_CONF - location of Galileo configuration files.
+#                       This defaults to GALILEO_HOME/conf, the default
+#                       configuration directory.
+#
+#                       GALILEO_ROOT - root directory for the file system.  This
+#                       also contains log files, status information, etc.
+################################################################################
+
+script_dir=$(cd "$(dirname "$0")" && pwd)
+
+if [[ -z ${GALILEO_HOME} ]]; then
+    jar=$(ls "${script_dir}"/../lib/Galileo*.jar 2> /dev/null)
+    if [[ $? -eq 0 ]]; then
+        export GALILEO_HOME="${script_dir}/.."
+    else
+        echo "The GALILEO_HOME environment variable is not configured!"
+        echo "Please define GALILEO_HOME to point to your Galileo installation."
+        exit 1
+    fi
+fi
+
+[[ -z ${GALILEO_CONF} ]] && export GALILEO_CONF="${GALILEO_HOME}/config"
+[[ -z ${GALILEO_ROOT} ]] && export GALILEO_ROOT="${GALILEO_HOME}/filesystem"
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # Script is not being sourced, so print out the configuration.
+    echo "GALILEO_HOME=${GALILEO_HOME}" 1>&2
+    echo "GALILEO_CONF=${GALILEO_CONF}" 1>&2
+    echo "GALILEO_ROOT=${GALILEO_ROOT}" 1>&2
+fi

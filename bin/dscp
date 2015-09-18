@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+################################################################################
+
+
+unset color flock footer lockfile header host_list
+parallel=false
+quiet=false
+active_threads=0
+max_threads=0
+host_list=""
+hosts="${DSSH_HOSTS}"
+
+
+print_usage() {
+cat <<EOM
+Usage: $(basename ${0}) [-cpq] [-f host_file...] [-l host_list...]
+       [-o ssh_opts...] [-u username] [-t max_threads] command
+
+$(basename ${0}) runs 'command' on a number of hosts specified by any
+combination of the following:
+    * -f host_file: plain text file(s) with hostnames of machines.
+    * -l host_list: list of hostnames given as the option operand
+    * A plain text list of hosts from stdin.
+    * Setting the DSSH_HOSTS environment variable.
+
+Additional options:
+    * -c                enable colorized output
+    * -o ssh_opt(s)     add options to the ssh command line
+    * -p                execute remote commands in parallel (no thread limit)
+    * -q                silence extra output (hostnames, newlines)
+    * -u username       execute commands as 'username'
+    * -t num_threads    limit the number of parallel threads (implies -p)
+
+EOM
+}
+
+
+# Adds a file of hostnames to the host list
+add_hostfile() {
+    if [[ ! -e "${@}" || ! -f "${@}" ]]; then
+        echo "Error: File '${@}' could not be read.";
+        return 1
+    fi
+
+    hosts="${hosts} $(cat ${@} 2> /dev/null)"
+}
+
+# If dscp is terminated early, kill any remaining child processes
+clean_children() {
+    kill 0
+}
+trap clean_children SIGINT SIGTERM
+
+thread_done() {
+    (( active_threads-- ))
+}
+trap thread_done SIGUSR1
+
+scp_host() {
+    local_file=${1}
+    remote_file=${2}
+
+    output=$(scp ${ssh_opts} ${local_file} ${remote_file} 2>&1)
+    exit_code=${?}
+
+    # scp defines nonzero exit code as error state
+    [[ ${exit_code} -gt 0 ]] && error=true
+
+    echo "${2}"
+
+    kill -s SIGUSR1 $$
+}
+
+while getopts "cf:l:o:pqu:t:" flag; do
+    case ${flag} in
+        c) color=true ;;
+        f) add_hostfile ${OPTARG} ;;
+        l) host_list="${host_list} ${OPTARG}" ;;
+        o) ssh_opts="${ssh_opts} ${OPTARG}" ;;
+        p) parallel=true; ;;
+        q) quiet=true ;;
+        u) ssh_opts="${ssh_opts} -l${OPTARG}" ;;
+        t) parallel=true; max_threads=${OPTARG} ;;
+        ?) print_usage; exit 1 ;;
+    esac
+done
+
+shift $(($OPTIND - 1))
+
+if [[ ! -t 0 ]]; then
+    # hosts were piped in
+    hosts="${hosts} $(cat 2> /dev/null)"
+fi
+
+if [[ -z ${hosts} && -z ${host_list} ]]; then
+    echo "Error: No hostnames specified!"
+    echo
+    print_usage
+    exit 1
+fi
+
+hosts="${hosts} ${host_list}"
+
+set -f # Temporarily disable pathname expansion
+for host in ${hosts}; do
+    scp_host "${1}" "${host}:${2}" &
+done
+set +f
+
+until wait; do :; done

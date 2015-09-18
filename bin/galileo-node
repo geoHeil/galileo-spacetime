@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+################################################################################
+# galileo-node - manages the execution of a Galileo Storage Node.
+################################################################################
+
+unset restart statuspath status stop use_color
+signal="SIGTERM"
+
+class="galileo.dht.StorageNode"
+logfile="storage-node.log"
+pidfile="storage-node.pid"
+statusfile="status.txt"
+
+print_usage() {
+cat <<EOM
+Usage: $(basename ${0}) [-cf] [-r root_dir] [command]
+
+Commands:
+    start (default) - starts a Storage Node instance.
+    stop - cleanly shuts down active Storage Node instances.
+    restart - performs the 'stop' and then 'start' commands.
+    status - print the current status of the active Storage Node (if any)
+
+Options:
+    -c             colorize output
+    -f             forceful shutdown (SIGKILL)
+    -r root_dir    set the Galileo root storage directory
+EOM
+}
+
+check_status() {
+    # Do a check to see if the daemon has died
+    online=false
+    pgrep --pidfile "${pidpath}" &> /dev/null
+    [[ ${?} -eq 0 ]] && online=true
+
+    if [[ ${online} == true ]]; then
+        # find out if a status line is availabile
+        if [[ -n "${statuspath}" && -e "${statuspath}" ]]; then
+            read status < "${statuspath}"
+            print_status "${status}"
+            return 0
+        else
+            print_status "$(colorize 33 'Status Unknown')"
+            return 1
+        fi
+    else
+        # if the pid file exists but the node is not running, then it must have
+        # failed.
+        if [[ -e "${pidpath}" ]]; then
+            print_status "$(colorize 31 'FAILED')"
+            return 1
+        else
+            print_status "$(colorize 31 'Offline')"
+            return 0
+        fi
+    fi
+}
+
+source "$(cd "$(dirname "$0")" && pwd)/galileo-environment"
+source "$(cd "$(dirname "$0")" && pwd)/util/funcs.sh"
+
+# parse options
+while getopts "cfr:" flag; do
+    case ${flag} in
+        c) use_color=true ;;
+        f) signal="SIGKILL" ;;
+        r) GALILEO_ROOT="${OPTARG}" ;;
+        ?) print_usage; exit 1 ;;
+    esac
+done
+
+# parse commands
+shift $(($OPTIND - 1))
+if [[ -n ${1} ]]; then
+    case ${1,,} in
+        "start") ;;
+        "stop") stop=true ;;
+        "restart") restart=true ;;
+        "status") status=true ;;
+
+        *) echo "Unknown command: ${1}"; exit 1 ;;
+    esac
+fi
+
+# determine paths
+logdir="${TMPDIR:-/tmp/}$(whoami)-galileo"
+# if the root directory is set and writable, use it for logging.
+if [[ -n ${GALILEO_ROOT} && -w ${GALILEO_ROOT} ]]; then
+    logdir="${GALILEO_ROOT}"
+fi
+
+mkdir -p "${logdir}" &> /dev/null
+logpath="${logdir}/${logfile}"
+pidpath="${logdir}/${pidfile}"
+statuspath="${logdir}/${statusfile}"
+
+# status
+if [[ ${status} == true ]]; then
+    check_status
+    exit 0
+fi
+
+# stop/restart
+if [[ ${stop} == true || ${restart} == true ]]; then
+    message="Offline"
+
+    blocking_pkill --uid "$(whoami)" --full "${class}" \
+        --pidfile "${pidpath}" --signal "${signal}"
+
+    if [[ ${?} -eq 1 ]]; then
+        message="${message} (no instance found)"
+    fi
+
+    if [[ ${stop} == true ]]; then
+        print_status "${message}"
+        exit 0
+    fi
+fi
+
+# start
+pgrep --pidfile "${pidpath}" &> /dev/null
+if [[ ${?} -eq 0 ]]; then
+    # There is already an instance running; print its status and exit.
+    check_status
+    exit 0
+fi
+
+java -classpath "${GALILEO_HOME}"/lib/\* -D"pidFile=${pidpath}" \
+    ${class} &> "${logpath}" &
+
+(echo "${!}") 2> /dev/null > "${pidpath}"
+(echo "Starting") 2> /dev/null > "${statuspath}"
+sleep 1
+check_status
