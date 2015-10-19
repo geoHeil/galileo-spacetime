@@ -26,7 +26,6 @@ software, even if advised of the possibility of such damage.
 package galileo.bmp;
 
 import galileo.dataset.Coordinates;
-
 import galileo.dataset.Point;
 
 import java.awt.Graphics2D;
@@ -70,22 +69,8 @@ public class QueryTransform {
         /* Calculate shift factors.  This method outputs Bitmaps that are
          * word-aligned (64 bit boundaries).  If the extra width or height added
          * overflows, then the shift factors are adjusted accordingly. */
-        int xshift = 0;
-        int yshift = 0;
-        int wshift = 64 - (w % 64);
-        int hshift = 64 - (h % 64);
-
-        if (w + wshift >= grid.getWidth()) {
-            int overflow = grid.getWidth() - (w + wshift) + 1;
-            wshift = wshift - overflow;
-            xshift = overflow;
-        }
-
-        if (h + hshift >= grid.getHeight()) {
-            int overflow = grid.getHeight() - (h + hshift) + 1;
-            hshift = hshift - overflow;
-            yshift = overflow;
-        }
+        int wshift = (64 - (w % 64))%64;
+        int hshift = (64 - (h % 64))%64;
 
         w = w + wshift;
         h = h + hshift;
@@ -93,9 +78,9 @@ public class QueryTransform {
         if (logger.isLoggable(Level.INFO)) {
             logger.log(Level.INFO, "Converting query polygon to "
                     + "GeoavailabilityGrid bitmap. {0}x{1} at ({2}, {3});"
-                    + " shifts: +({4}, {5}) -({6}, {7})",
+                    + " shifts: +({4}, {5})",
                     new Object[] {
-                        w, h, x, y, wshift, hshift, xshift, yshift
+                        w, h, x, y, wshift, hshift
                     });
         }
 
@@ -106,11 +91,19 @@ public class QueryTransform {
         /* Apply these x, y transformations to the resulting image */
         AffineTransform transform = new AffineTransform();
         transform.translate(-x, -y);
-        transform.translate(-xshift, -yshift);
         g.setTransform(transform);
 
         g.fillPolygon(p);
         g.dispose();
+        
+        /*try {
+			BitmapVisualization.imageToFile(
+			        img, "RawQuery.gif");
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			System.out.println("failed to save the raw query image");
+			e.printStackTrace();
+		}*/
 
         /* Get the raw image data, in bytes */
         DataBufferByte buffer =

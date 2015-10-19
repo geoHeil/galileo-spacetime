@@ -104,19 +104,19 @@ public class Bitmap implements Iterable<Integer> {
      * @return Bitmap representation of the bytes provided, integrated onto the
      * bitmap 'canvas' with the width, height, and positions provided.
      */
-    public static Bitmap fromBytes(byte[] bytes, int x, int y,
+    /*public static Bitmap fromBytes(byte[] bytes, int x, int y,
             int width, int height,
             int canvasWidth, int canvasHeight) {
 
         EWAHCompressedBitmap bmp = new EWAHCompressedBitmap();
 
-        /* Shift through the bitmap to the first place we need to draw. */
+         Shift through the bitmap to the first place we need to draw. 
         int idx = canvasWidth * y + x;
         int shift = idx % 64;
         int skipWords = (idx - shift) / 64;
         bmp.addStreamOfEmptyWords(false, skipWords);
 
-        /* Convert raw image data to binary words */
+         Convert raw image data to binary words 
         long[] words = bytesToWords(bytes);
 
         int lines = height;
@@ -127,6 +127,50 @@ public class Bitmap implements Iterable<Integer> {
             bmp.addStreamOfEmptyWords(false, (canvasWidth / 64) - wordsPerLine);
         }
 
+        return new Bitmap(bmp);
+    }*/
+    
+    
+    public static Bitmap fromBytes(byte[] bytes, int x, int y,
+            int width, int height,
+            int canvasWidth, int canvasHeight) {
+
+        EWAHCompressedBitmap bmp = new EWAHCompressedBitmap();
+        //if the bounded rectangle of the polygon does not intersect the grid canvas
+        if(x >= canvasWidth || y >= canvasHeight || x + width < 0 || y + height < 0) {
+        	for(int line = 0; line < canvasHeight; line++)
+        		bmp.addStreamOfEmptyWords(false, canvasWidth/64);
+        	return new Bitmap(bmp);
+        }
+        
+        int intersectedX = (x < 0) ? 0 : x;
+        int intersectedY = (y < 0) ? 0 : y;
+        //intersection width of the bounding rectangle and the grid
+        int intersectedWidth = (x < 0) ? ((width + x > canvasWidth) ? canvasWidth : width + x) 
+        							: ((x + width > canvasWidth)? canvasWidth - x : width);
+        if(intersectedWidth > canvasWidth)
+        	intersectedWidth = canvasWidth;
+
+        /* Shift through the bitmap to the first place we need to draw. */
+        bmp.addStreamOfEmptyWords(false, canvasWidth * intersectedY / 64);
+        
+        int shift = intersectedX % 64;
+        intersectedWidth += shift;
+        int skipWords = (intersectedX - shift) / 64; //definitely positive or zero
+        /* Convert raw image data to binary words */
+        long[] words = bytesToWords(bytes);
+
+        int wordsPerLine = width / 64;
+        for (int line = intersectedY; line < canvasHeight; line++) {
+        	int transformedLine = line - y;
+            int wordIdx = transformedLine * wordsPerLine;
+            bmp.addStreamOfEmptyWords(false, skipWords);
+            if(transformedLine > 0 && transformedLine < height)
+            	bmp.addStreamOfLiteralWords(words, wordIdx, intersectedWidth/64);
+            else
+            	bmp.addStreamOfEmptyWords(false, intersectedWidth/64);
+            bmp.addStreamOfEmptyWords(false, (canvasWidth - intersectedWidth - skipWords*64)/64);
+        }
         return new Bitmap(bmp);
     }
 

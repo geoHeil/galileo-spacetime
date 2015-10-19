@@ -133,7 +133,8 @@ public class BitmapVisualization {
             int index = it.next();
             int x = index % width;
             int y = index / width;
-            img.setRGB(x, y, color.getRGB());
+            if(x >= 0 && x < width && y >= 0 && y < height)
+            	img.setRGB(x, y, color.getRGB());
         }
 
         return img;
