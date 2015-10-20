@@ -125,7 +125,7 @@ public class NetworkConfig {
 
             if (hostInfo.length <= 1) {
                 /* No port specified; use the default port. */
-                NodeInfo node = new NodeInfo(nodeName, DEFAULT_PORT);
+                NodeInfo node = new NodeInfo(nodeName.toLowerCase(), DEFAULT_PORT);
                 group.addNode(node);
             } else {
                 /* A port, or list of several comma-separated ports, has been
@@ -135,7 +135,7 @@ public class NetworkConfig {
                 for (String portEntry : ports) {
                     try {
                         int port = Integer.parseInt(portEntry);
-                        group.addNode(new NodeInfo(nodeName, port));
+                        group.addNode(new NodeInfo(nodeName.toLowerCase(), port));
                     } catch (NumberFormatException e) {
                         logger.log(Level.WARNING, "Could not parse " +
                                 "StorageNode port number on line " + lineNum +
