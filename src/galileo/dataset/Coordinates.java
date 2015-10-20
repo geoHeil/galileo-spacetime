@@ -47,8 +47,15 @@ public class Coordinates implements ByteSerializable {
      *     Longitude for this coordinate pair, in degrees.
      */
     public Coordinates(float lat, float lon) {
-        this.lat = lat;
-        this.lon = lon;
+    	if(lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180){
+    		this.lat = lat;
+        	this.lon = lon;
+    	} else if(lat >= -180 && lat <=180 && lon >= -90 && lon <= 90){
+    		this.lat = lon;
+    		this.lon = lat;
+    	} else {
+    		throw new IllegalArgumentException("Illegal location. Valid range is Latitude [-90, 90] and Longitude[-180, 180].");
+    	}
     }
 
     /**
