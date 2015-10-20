@@ -244,7 +244,9 @@ public class GeoavailabilityGrid {
     throws BitmapException {
         applyUpdates();
         Bitmap queryBitmap = QueryTransform.queryToGridBitmap(query, this);
-        return this.bmp.and(queryBitmap).toArray();
+        if(this.bmp.intersects(queryBitmap))
+        	return this.bmp.and(queryBitmap).toArray();
+    	return null;
     }
 
     /**

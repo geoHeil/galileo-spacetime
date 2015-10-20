@@ -155,7 +155,8 @@ public class Bitmap implements Iterable<Integer> {
         bmp.addStreamOfEmptyWords(false, canvasWidth * intersectedY / 64);
         
         int shift = intersectedX % 64;
-        intersectedWidth += shift;
+        if(intersectedWidth % 64 != 0)
+        	intersectedWidth += shift;
         int skipWords = (intersectedX - shift) / 64; //definitely positive or zero
         /* Convert raw image data to binary words */
         long[] words = bytesToWords(bytes);
@@ -163,9 +164,10 @@ public class Bitmap implements Iterable<Integer> {
         int wordsPerLine = width / 64;
         for (int line = intersectedY; line < canvasHeight; line++) {
         	int transformedLine = line - y;
-            int wordIdx = transformedLine * wordsPerLine;
+        	int transformedX = intersectedX - x;
+            int wordIdx = transformedLine * wordsPerLine + transformedX/64;
             bmp.addStreamOfEmptyWords(false, skipWords);
-            if(transformedLine > 0 && transformedLine < height)
+            if(transformedLine >= 0 && transformedLine < height)
             	bmp.addStreamOfLiteralWords(words, wordIdx, intersectedWidth/64);
             else
             	bmp.addStreamOfEmptyWords(false, intersectedWidth/64);

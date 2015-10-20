@@ -34,6 +34,7 @@ import java.awt.Rectangle;
 import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
+import java.io.IOException;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -65,6 +66,14 @@ public class QueryTransform {
         int y = (int) boundingBox.getY();
         int w = (int) boundingBox.getWidth();
         int h = (int) boundingBox.getHeight();
+        
+        int shift = (x >0) ? x % 64 : 0; //if bounding box starts with negative x, we will map it on the grid starting at 0, so shift is not needed.
+        w = w + shift;
+        p = new Polygon();
+        for (Coordinates coords : poly) {
+            Point<Integer> point = grid.coordinatesToXY(coords);
+            p.addPoint(point.X() + shift, point.Y());
+        }
 
         /* Calculate shift factors.  This method outputs Bitmaps that are
          * word-aligned (64 bit boundaries).  If the extra width or height added
@@ -82,6 +91,7 @@ public class QueryTransform {
                     new Object[] {
                         w, h, x, y, wshift, hshift
                     });
+            logger.log(Level.INFO, "Polygon shifted by {0} along x axis on the new plane", shift);
         }
 
         BufferedImage img = new BufferedImage(w, h,
@@ -96,14 +106,14 @@ public class QueryTransform {
         g.fillPolygon(p);
         g.dispose();
         
-        /*try {
+        try {
 			BitmapVisualization.imageToFile(
 			        img, "RawQuery.gif");
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			System.out.println("failed to save the raw query image");
 			e.printStackTrace();
-		}*/
+		}
 
         /* Get the raw image data, in bytes */
         DataBufferByte buffer =

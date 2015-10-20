@@ -98,10 +98,17 @@ public class GeoavailabilityMap<T> {
     throws BitmapException {
         Map<Integer, List<T>> results = new HashMap<>();
         int[] indices = grid.query(query);
-        for (int i : indices) {
-            results.put(i, points.get(i));
+        
+        if(null != indices){
+		    for (int i : indices) {
+		        results.put(i, points.get(i));
+		    }
         }
 
         return results;
+    }
+    
+    public GeoavailabilityGrid getGrid(){
+    	return this.grid;
     }
 }
