@@ -42,5 +42,9 @@ public class GalileoEventMap extends EventMap {
         addMapping(301, GenericRequest.class);
         addMapping(302, GenericResponse.class);
         addMapping(303, GenericEvent.class);
+        
+        addMapping(401, GeoQueryRequest.class);
+        addMapping(402, GeoQueryEvent.class);
+        addMapping(403, GeoQueryResponse.class);
     }
 }
