@@ -110,13 +110,20 @@ public class SpatialHierarchyPartitioner extends Partitioner<Metadata> {
         }
         nodePositions.get(groupPosition).put(nodePosition, node);
     }
+    
 
     @Override
     public NodeInfo locateData(Metadata metadata)
     throws HashException, PartitionException {
         /* First, determine the group that should hold this file */
         BigInteger group = groupHashRing.locate(metadata);
-
+        // Get the geohash that this metadata will fall into.
+        String geoHash = this.groupHash.getGeoHash(group);
+        // Get the group that is going to store this metadata.
+        GroupInfo groupInfo = groupPositions.get(group);
+        // Add the geoHash to that group indicating that the group is responsible for that geoHash 
+        logger.info("LocateData: Adding geoHash " + geoHash + " to the group " + groupInfo.getName());
+        groupInfo.addGeoHash(geoHash);
         /* Next, the StorageNode */
         String combinedAttrs = metadata.getName();
         for (Feature feature : metadata.getAttributes()) {

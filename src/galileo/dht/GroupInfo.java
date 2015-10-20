@@ -26,23 +26,41 @@ software, even if advised of the possibility of such damage.
 package galileo.dht;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Records network group information.  Groups can contain arbitrary subgroups,
  * and, of course, a number of nodes.
  *
- * @author malensek
+ * @author malensek, jkachika
  */
 public class GroupInfo {
 
     private String name;
 
-    List<NodeInfo> nodes = new ArrayList<>();
-    List<GroupInfo> groups = new ArrayList<>();
+    List<NodeInfo> nodes;
+    List<GroupInfo> groups;
+    Set<String> geohashes;
 
     public GroupInfo(String name) {
         this.name = name;
+        this.nodes = new ArrayList<>();
+        this.groups = new ArrayList<>();
+        this.geohashes = new HashSet<String>();
+    }
+    
+    public void addGeoHash(String geoHash){
+    	this.geohashes.add(geoHash);
+    }
+    
+    public Set<String> getGeoHashes(){
+    	return new HashSet<String>(this.geohashes);
+    }
+    
+    public boolean hasGeoHash(String geohash){
+    	return this.geohashes.contains(geohash);
     }
 
     public void addNode(NodeInfo node) {

@@ -25,11 +25,19 @@ software, even if advised of the possibility of such damage.
 
 package galileo.dht;
 
+import galileo.bmp.Bitmap;
+import galileo.bmp.BitmapVisualization;
+import galileo.bmp.GeoavailabilityMap;
+import galileo.bmp.GeoavailabilityQuery;
+import galileo.bmp.QueryTransform;
 import galileo.comm.GalileoEventMap;
 import galileo.comm.GenericEvent;
 import galileo.comm.GenericEventType;
 import galileo.comm.GenericRequest;
 import galileo.comm.GenericResponse;
+import galileo.comm.GeoQueryEvent;
+import galileo.comm.GeoQueryRequest;
+import galileo.comm.GeoQueryResponse;
 import galileo.comm.QueryEvent;
 import galileo.comm.QueryRequest;
 import galileo.comm.QueryResponse;
@@ -37,6 +45,7 @@ import galileo.comm.StorageEvent;
 import galileo.comm.StorageRequest;
 import galileo.config.SystemConfig;
 import galileo.dataset.Block;
+import galileo.dataset.Coordinates;
 import galileo.dataset.Metadata;
 import galileo.dataset.feature.Feature;
 import galileo.dht.hash.HashException;
@@ -50,16 +59,24 @@ import galileo.fs.GeospatialFileSystem;
 import galileo.graph.Path;
 import galileo.net.ClientConnectionPool;
 import galileo.net.MessageListener;
+import galileo.net.NetworkDestination;
 import galileo.net.PortTester;
 import galileo.net.RequestListener;
 import galileo.net.ServerMessageRouter;
+import galileo.util.GeoHash;
 import galileo.util.Version;
 
+import java.awt.Color;
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -76,18 +93,22 @@ import java.util.logging.Logger;
 public class StorageNode implements RequestListener {
 
 	private static final Logger logger = Logger.getLogger("galileo");
+	private static final int GEO_MAP_PRECISION = 20;
 	private StatusLine nodeStatus;
-
+	
+	private String hostname; //The name of this host
 	private int port;
 	private String rootDir;
 
 	private File pidFile;
 
 	private NetworkInfo network;
+	private GroupInfo snGroup; //Group of this storage node in DHT
 
 	private ServerMessageRouter messageRouter;
 	private ClientConnectionPool connectionPool;
 	private GeospatialFileSystem fs;
+	private HashMap<String, GeoavailabilityMap<Metadata>> geoMap;
 
 	private GalileoEventMap eventMap = new GalileoEventMap();
 	private EventReactor eventReactor = new EventReactor(this, eventMap);
@@ -99,13 +120,21 @@ public class StorageNode implements RequestListener {
 
 	// private String sessionId;
 
-	public StorageNode() {
+	public StorageNode() throws UnknownHostException {
+		try {
+			this.hostname = InetAddress.getLocalHost().getHostName();
+		} catch (UnknownHostException e) {
+			this.hostname = System.getenv("HOSTNAME");
+			if(hostname == null || hostname.length() == 0)
+				throw new UnknownHostException("Failed to identify host name of the storage node. Details follow: " + e.getMessage());
+		}
+		this.hostname = this.hostname.toLowerCase();
 		this.port = NetworkConfig.DEFAULT_PORT;
 		this.rootDir = SystemConfig.getRootDir();
 
 		// this.sessionId = HostIdentifier.getSessionId(port);
 		nodeStatus = new StatusLine(SystemConfig.getRootDir() + "/status.txt");
-
+		this.geoMap = new HashMap<String, GeoavailabilityMap<Metadata>>();
 		String pid = System.getProperty("pidFile");
 		if (pid != null) {
 			this.pidFile = new File(pid);
@@ -136,6 +165,19 @@ public class StorageNode implements RequestListener {
 		nodeStatus.set("Reading network configuration");
 		network = NetworkConfig.readNetworkDescription(SystemConfig
 				.getNetworkConfDir());
+		List<GroupInfo> groups = network.getGroups();
+		//identifying the group of this storage node
+		outer: for(GroupInfo group : groups){
+			List<NodeInfo> nodes = group.getNodes();
+			for(NodeInfo node : nodes){
+				if(node.getHostname().equalsIgnoreCase(this.hostname)){
+					this.snGroup = group; //setting the group of this storage node.
+					break outer;
+				}
+			}
+		}
+		if(this.snGroup == null)
+			throw new Exception("Failed to identify the group of the storage node. Type 'hostname' in the terminal and make sure that it matches the hostnames specified in the network configuration files.");
 
 		/* Set up the FileSystem. */
 		nodeStatus.set("Initializing file system");
@@ -209,7 +251,6 @@ public class StorageNode implements RequestListener {
 		Block file = request.getBlock();
 		Metadata metadata = file.getMetadata();
 		NodeInfo node = partitioner.locateData(metadata);
-
 		logger.log(Level.INFO, "Storage destination: {0}", node);
 		StorageEvent store = new StorageEvent(file);
 		sendEvent(node, store);
@@ -219,6 +260,19 @@ public class StorageNode implements RequestListener {
 	public void handleStorage(StorageEvent store, EventContext context)
 			throws FileSystemException, IOException {
 		logger.log(Level.INFO, "Storing block: {0}", store.getBlock());
+		Block file = store.getBlock();
+		Metadata metadata = file.getMetadata();
+		String geoHash = GeoHash.encode(metadata.getSpatialProperties().getCoordinates(), GEO_MAP_PRECISION);
+		String basegh = geoHash.substring(0, 2);
+		logger.log(Level.INFO, "Geohash of the block: {0}", basegh);
+		GeoavailabilityMap<Metadata> map = this.geoMap.get(basegh);
+		if(map == null){
+			map = new GeoavailabilityMap<Metadata>(basegh, GEO_MAP_PRECISION);
+			this.geoMap.put(basegh, map);
+		}
+		boolean added = map.addPoint(metadata.getSpatialProperties().getCoordinates(), metadata);
+		if(added)
+			logger.log(Level.INFO, "Metadata added to the GeoMap({0})", basegh);
 		fs.storeBlock(store.getBlock());
 	}
 
@@ -302,9 +356,91 @@ public class StorageNode implements RequestListener {
 			return;
 		}
 	}
+	
+	
+	/**
+	 * Handles a geo query request from a client. Query requests result in a number
+	 * of subqueries being performed across the Galileo network.
+	 */
+	@EventHandler
+	public void handleGeoQueryRequest(GeoQueryRequest request, EventContext context)
+			throws IOException {
+		
+		List<Coordinates> polygon = request.getPolygon();
+		logger.log(Level.INFO, "Geoquery request: {0}", polygon);
+		logger.log(Level.INFO, "Geohashes of this node: {0}", this.geoMap.keySet());
+		logger.log(Level.INFO, "Geohashes of this group: {0}", this.snGroup.getGeoHashes());
+
+		Set<GroupInfo> probableGroups = new HashSet<GroupInfo>();
+		List<GroupInfo> allGroups = this.network.getGroups();
+		for(Coordinates coords : polygon) {
+			String geoHash = GeoHash.encode(coords, 2);
+			logger.log(Level.INFO, "Geohash of the coordinates("+coords+") is " + geoHash);
+			for(GroupInfo group : allGroups){
+				if(group.hasGeoHash(geoHash)){
+					logger.log(Level.INFO, "Probable group: "+ group.getName() +", Geohashes: " + group.getGeoHashes());
+					probableGroups.add(group);
+				}
+			}
+		}
+		logger.log(Level.INFO, "Number of probable groups: " + probableGroups.size());
+		Set<NetworkDestination> destinations = new HashSet<NetworkDestination>();
+		for(GroupInfo group : probableGroups)
+			destinations.addAll(group.getAllNodes());
+		logger.log(Level.INFO, "Sending requests to: " + destinations);
+		ClientRequestHandler reqHandler = new ClientRequestHandler(
+				destinations, context, this);
+		GeoQueryEvent gqEvent = new GeoQueryEvent(polygon);
+		GeoQueryResponse response = new GeoQueryResponse(new HashSet<Metadata>());
+		reqHandler.handleRequest(gqEvent, response);
+		this.requestHandlers.add(reqHandler);
+	}
 
 	/**
-	 * Triggered when the request is completed by the ClientRequestHandler
+	 * Handles an internal Geo Query request (from another StorageNode)
+	 */
+	@EventHandler
+	public void handleGeoQueryEvent(GeoQueryEvent query, EventContext context)
+			throws IOException {
+		HashSet<Metadata> results = new HashSet<Metadata>();
+		GeoavailabilityQuery geoQuery = new GeoavailabilityQuery(query.getPolygon());
+		try{
+			logger.info("Geoquery Event - Polygon:" + query.getPolygon().toString());
+			String prevHash = null;
+			for(Coordinates coords : query.getPolygon()) {
+				String geoHash = GeoHash.encode(coords, 2);
+				if(!geoHash.equalsIgnoreCase(prevHash)){
+					logger.info("Geoquery Event - Coordinate:" + coords + ", GeoHash:" + geoHash);
+					prevHash = geoHash;
+					GeoavailabilityMap<Metadata> map = this.geoMap.get(geoHash);
+					if(null != map){
+						logger.info("Geoquery Event - Obtained the geoMap and issued the geoQuery");
+				        BufferedImage b = BitmapVisualization.drawGeoavailabilityGrid(map.getGrid(), Color.BLACK);
+				        logger.info("Geoquery Event - storing the GeoavailabilityMap image");
+				        BitmapVisualization.imageToFile(b, this.hostname + "-" + geoHash + "-GeoavailabilityMap.gif");
+				        Bitmap queryBitamp = QueryTransform.queryToGridBitmap(geoQuery, map.getGrid());
+				        BufferedImage polyImage = BitmapVisualization.drawBitmap(queryBitamp, map.getGrid().getWidth(), map.getGrid().getHeight(), Color.RED);
+				        logger.info("Geoquery Event - storing the Polygon image");
+				        BitmapVisualization.imageToFile(
+				                polyImage, this.hostname + "-" + geoHash + "-GeoavailabilityQuery.gif");
+						Map<Integer, List<Metadata>> rMap = map.query(geoQuery);
+						for(List<Metadata> mList : rMap.values()){
+							logger.info("Geoquery Event Results - Size of the Metadata List: "+mList.size());
+							results.addAll(mList);
+						}
+					}
+				}
+			}
+		} catch(Exception e){
+			logger.log(Level.SEVERE, "Something went wrong while querying the geoavailability map. Results may not be complete. Sending partial results to the client. Issue details follow:", e);
+		}
+		logger.info("Got " + results.size() + " results");
+		GeoQueryResponse response = new GeoQueryResponse(results);
+		context.sendReply(response);
+	}
+
+	/**
+	 * Triggered when the request is completed by the {@link ClientRequestHandler}
 	 */
 	@Override
 	public void onRequestCompleted(Event reponse, EventContext context,
@@ -356,8 +492,8 @@ public class StorageNode implements RequestListener {
 	 * Executable entrypoint for a Galileo DHT Storage Node
 	 */
 	public static void main(String[] args) {
-		StorageNode node = new StorageNode();
 		try {
+			StorageNode node = new StorageNode();
 			node.start();
 		} catch (Exception e) {
 			logger.log(Level.SEVERE, "Could not start StorageNode.", e);
