@@ -67,7 +67,7 @@ public class QueryDemo implements MessageListener {
 			int counter = 0;
 			for (Path<Feature, String> path : results) {
 				if (path.size() > 1) {
-					System.out.println(path);
+					System.out.println(path.getLabels());
 					counter++;
 				}
 				if (counter == limit) {
@@ -101,7 +101,7 @@ public class QueryDemo implements MessageListener {
 		/* This query checks for total_precipitation values equal to 83.30055 */
 		Query q = new Query();
 		Operation o = new Operation(new Expression(
-				">", new Feature("wind_direction", 0.0f)));
+				"==", new Feature("locality", "Pomona")));
 		q.addOperation(o);
 
 

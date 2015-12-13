@@ -7,7 +7,9 @@ import galileo.serialization.SerializationInputStream;
 import galileo.serialization.SerializationOutputStream;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 public class GenericResponse implements Event{
@@ -45,6 +47,10 @@ public class GenericResponse implements Event{
         	Set<NodeInfo> readResults = new HashSet<NodeInfo>();
         	in.readSerializableCollection(NodeInfo.class, readResults);
         	this.results = readResults;
+        } else if(this.eventType == GenericEventType.LOCALITY){
+        	Map<String, String> readResults = new HashMap<String, String>();
+        	in.readStringMap(readResults);
+        	this.results = readResults;
         }
     }
 
@@ -56,6 +62,8 @@ public class GenericResponse implements Event{
 			out.writeStringCollection((Set<String>)results);
 		else if(eventType == GenericEventType.NODEINFO)
 			out.writeSerializableCollection((Set<NodeInfo>)results);
+		else if(eventType == GenericEventType.LOCALITY)
+			out.writeStringMap((Map<String, String>)results);
 	}
 	
 

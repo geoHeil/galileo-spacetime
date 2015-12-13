@@ -7,7 +7,7 @@ package galileo.comm;
  * @author jkachika
  */
 public enum GenericEventType {
-	FEATURES("features"), NODEINFO("nodeinfo");
+	FEATURES("features"), NODEINFO("nodeinfo"), LOCALITY("locality");
 	
 	private String type;
 	

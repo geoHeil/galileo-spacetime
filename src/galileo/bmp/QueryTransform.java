@@ -34,7 +34,6 @@ import java.awt.Rectangle;
 import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
-import java.io.IOException;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -106,14 +105,14 @@ public class QueryTransform {
         g.fillPolygon(p);
         g.dispose();
         
-        try {
+        /*try {
 			BitmapVisualization.imageToFile(
 			        img, "RawQuery.gif");
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			System.out.println("failed to save the raw query image");
 			e.printStackTrace();
-		}
+		}*/
 
         /* Get the raw image data, in bytes */
         DataBufferByte buffer =

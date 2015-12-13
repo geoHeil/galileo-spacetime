@@ -25,11 +25,8 @@ software, even if advised of the possibility of such damage.
 
 package galileo.dht;
 
-import galileo.bmp.Bitmap;
-import galileo.bmp.BitmapVisualization;
 import galileo.bmp.GeoavailabilityMap;
 import galileo.bmp.GeoavailabilityQuery;
-import galileo.bmp.QueryTransform;
 import galileo.comm.GalileoEventMap;
 import galileo.comm.GenericEvent;
 import galileo.comm.GenericEventType;
@@ -66,8 +63,6 @@ import galileo.net.ServerMessageRouter;
 import galileo.util.GeoHash;
 import galileo.util.Version;
 
-import java.awt.Color;
-import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -94,6 +89,10 @@ public class StorageNode implements RequestListener {
 
 	private static final Logger logger = Logger.getLogger("galileo");
 	private static final int GEO_MAP_PRECISION = 20;
+	private static final String LOCALITY = "locality";
+	private static final String ZIP = "postal_code";
+	private static final String LOCALITY_REGEX = "[a-zA-Z\\-]+";
+	private static final String ZIP_REGEX = "\\d+";
 	private StatusLine nodeStatus;
 	
 	private String hostname; //The name of this host
@@ -117,6 +116,8 @@ public class StorageNode implements RequestListener {
 	private Partitioner<Metadata> partitioner;
 
 	private ConcurrentHashMap<String, QueryTracker> queryTrackers = new ConcurrentHashMap<>();
+	//Locality information that this node stores. Needed for Columbus.
+	private HashMap<String, String> localities;
 
 	// private String sessionId;
 
@@ -140,6 +141,7 @@ public class StorageNode implements RequestListener {
 			this.pidFile = new File(pid);
 		}
 		this.requestHandlers = new CopyOnWriteArrayList<ClientRequestHandler>();
+		this.localities = new HashMap<String, String>();
 	}
 
 	/**
@@ -271,9 +273,14 @@ public class StorageNode implements RequestListener {
 			this.geoMap.put(basegh, map);
 		}
 		boolean added = map.addPoint(metadata.getSpatialProperties().getCoordinates(), metadata);
-		if(added)
+		if(added){
 			logger.log(Level.INFO, "Metadata added to the GeoMap({0})", basegh);
-		fs.storeBlock(store.getBlock());
+			String locality = metadata.getAttribute(LOCALITY).getString();
+			String zip = metadata.getAttribute(ZIP).getString();
+			if(locality.matches(LOCALITY_REGEX) && zip.matches(ZIP_REGEX))
+				this.localities.put(zip, locality);
+			fs.storeBlock(store.getBlock());
+		}
 	}
 
 	/**
@@ -283,14 +290,22 @@ public class StorageNode implements RequestListener {
 	@EventHandler
 	public void handleGenericRequest(GenericRequest request,
 			EventContext context) throws IOException {
+		logger.info("Generic Request: " + request.getEventType());
 		if (request.getEventType() == GenericEventType.FEATURES) {
-			logger.info("Generic Request: " + request.getEventType());
 			GenericEvent gEvent = new GenericEvent(request.getEventType());
 			ClientRequestHandler reqHandler = new ClientRequestHandler(
 					network.getAllDestinations(), context, this);
 			reqHandler.handleRequest(gEvent,
 					new GenericResponse(request.getEventType(),
 							new HashSet<String>()));
+			this.requestHandlers.add(reqHandler);
+		} else if (request.getEventType() == GenericEventType.LOCALITY) {
+			GenericEvent gEvent = new GenericEvent(request.getEventType());
+			ClientRequestHandler reqHandler = new ClientRequestHandler(
+					network.getAllDestinations(), context, this);
+			reqHandler.handleRequest(gEvent,
+					new GenericResponse(request.getEventType(),
+							new HashMap<String, String>()));
 			this.requestHandlers.add(reqHandler);
 		}
 	}
@@ -305,6 +320,12 @@ public class StorageNode implements RequestListener {
 			features.addAll(fs.getFeaturesList());
 			logger.info("Features : " + features);
 			GenericResponse response = new GenericResponse(eventType, features);
+			context.sendReply(response);
+		} else if (eventType == GenericEventType.LOCALITY) {
+			logger.info("Retreiving locality list");
+			HashMap<String, String> localityMap = new HashMap<String, String>(this.localities);
+			logger.info("localities : " + localityMap);
+			GenericResponse response = new GenericResponse(eventType, localityMap);
 			context.sendReply(response);
 		}
 	}
@@ -415,14 +436,14 @@ public class StorageNode implements RequestListener {
 					GeoavailabilityMap<Metadata> map = this.geoMap.get(geoHash);
 					if(null != map){
 						logger.info("Geoquery Event - Obtained the geoMap and issued the geoQuery");
-				        BufferedImage b = BitmapVisualization.drawGeoavailabilityGrid(map.getGrid(), Color.BLACK);
+				        /*BufferedImage b = BitmapVisualization.drawGeoavailabilityGrid(map.getGrid(), Color.BLACK);
 				        logger.info("Geoquery Event - storing the GeoavailabilityMap image");
 				        BitmapVisualization.imageToFile(b, this.hostname + "-" + geoHash + "-GeoavailabilityMap.gif");
 				        Bitmap queryBitamp = QueryTransform.queryToGridBitmap(geoQuery, map.getGrid());
 				        BufferedImage polyImage = BitmapVisualization.drawBitmap(queryBitamp, map.getGrid().getWidth(), map.getGrid().getHeight(), Color.RED);
 				        logger.info("Geoquery Event - storing the Polygon image");
 				        BitmapVisualization.imageToFile(
-				                polyImage, this.hostname + "-" + geoHash + "-GeoavailabilityQuery.gif");
+				                polyImage, this.hostname + "-" + geoHash + "-GeoavailabilityQuery.gif");*/
 						Map<Integer, List<Metadata>> rMap = map.query(geoQuery);
 						for(List<Metadata> mList : rMap.values()){
 							logger.info("Geoquery Event Results - Size of the Metadata List: "+mList.size());

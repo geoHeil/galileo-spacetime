@@ -18,6 +18,7 @@ import galileo.serialization.SerializationException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -46,6 +47,7 @@ public class ClientRequestHandler implements MessageListener {
 	private AtomicLong timeout;
 	private Event response;
 	private boolean responding;
+	private Thread timerThread;
 
 	public ClientRequestHandler(Collection<NetworkDestination> nodes,
 			EventContext clientContext, RequestListener listener)
@@ -62,6 +64,26 @@ public class ClientRequestHandler implements MessageListener {
 		this.expectedResponses = new AtomicInteger(this.nodes.size());
 		this.timeout = new AtomicLong();
 		this.responding = false;
+		this.timerThread = new Thread("Client Request Handler - Timer Thread") {
+			public void run() {
+				try {
+					while(System.currentTimeMillis() < timeout.get()){
+						Thread.sleep(500);
+						if(isInterrupted())
+							throw new InterruptedException("Deliberate interruption");
+					}
+					if(!responding){
+						logger.log(Level.INFO,
+								"Request timed out. Wrapping up the request if not already closed.");
+						ClientRequestHandler.this.expectedResponses.set(0);
+						ClientRequestHandler.this.onMessage(null);
+					}
+				} catch (InterruptedException e) {
+					logger.log(Level.INFO,
+							"Timeout thread closed.");
+				}
+			};
+		};
 	}
 
 	@SuppressWarnings("unchecked")
@@ -75,7 +97,6 @@ public class ClientRequestHandler implements MessageListener {
 				+ " more message(s)");
 		if (awaitedResponses <= 0) {
 			this.responding = true;
-			logger.log(Level.INFO, "Request successfully completed.");
 			for (GalileoMessage gresponse : this.responses) {
 				Event event;
 				try {
@@ -86,12 +107,18 @@ public class ClientRequestHandler implements MessageListener {
 								((QueryResponse) event).getResults());
 					else if (event instanceof GenericResponse
 							&& this.response instanceof GenericResponse) {
+						//If gr.getResults() is null, it implies that the serilaization did not happen for that object
 						GenericResponse gr = (GenericResponse) event;
 						GenericResponse thisResponse = (GenericResponse) this.response;
 						if (gr.getEventType() == GenericEventType.FEATURES
-								&& thisResponse.getEventType() == GenericEventType.FEATURES)
+								&& thisResponse.getEventType() == GenericEventType.FEATURES){
 							((Set<String>) (thisResponse).getResults())
 									.addAll((Set<String>) gr.getResults());
+						} else if(gr.getEventType() == GenericEventType.LOCALITY
+								&& thisResponse.getEventType() == GenericEventType.LOCALITY) {
+							((HashMap<String, String>) (thisResponse).getResults())
+							.putAll((HashMap<String, String>)gr.getResults());
+						}
 					} else if (event instanceof GeoQueryResponse 
 								&& this.response instanceof GeoQueryResponse){
 						GeoQueryResponse gqr = (GeoQueryResponse)event;
@@ -103,6 +130,13 @@ public class ClientRequestHandler implements MessageListener {
 							"An exception occurred while processing the response message. Details follow:"
 									+ e.getMessage());
 				}
+			}
+			logger.log(Level.INFO, "Request successfully completed.");
+			try{
+				logger.log(Level.INFO, "Interrupting timer thread because of request completion");
+				this.timerThread.interrupt();
+			} catch(Exception e){
+				logger.log(Level.INFO, "An exception occurred while cleaning up the client request handler: ", e);
 			}
 			this.requestListener.onRequestCompleted(this.response,
 					clientContext, this);
@@ -130,29 +164,22 @@ public class ClientRequestHandler implements MessageListener {
 			// Timeout thread which sets expectedResponses to zero after the
 			// specified time elapses.
 			this.timeout.set(System.currentTimeMillis() + DELAY);
-			new Thread() {
-				public void run() {
-					try {
-						while(System.currentTimeMillis() < timeout.get())
-							Thread.sleep(500);
-						if(!responding){
-							logger.log(Level.INFO,
-									"Request timed out. Wrapping up the request if not already closed.");
-							ClientRequestHandler.this.expectedResponses.set(0);
-							ClientRequestHandler.this.onMessage(null);
-						}
-					} catch (InterruptedException e) {
-						logger.log(Level.INFO,
-								"Timeout thread interrupted. Details follow: ",
-								e);
-					}
-				};
-			}.start();
+			this.timerThread.start();
 		} catch (IOException e) {
 			logger.log(Level.INFO,
 					"Failed to send request to other nodes in the network. Details follow: "
 							+ e.getMessage());
 		}
+	}
+	
+	public void silentClose(){
+		try{
+			this.router.shutdown();
+		}catch(Exception e){
+			logger.log(Level.INFO,
+					"Failed to shutdown the completed client request handler: ", e);
+		}
+		
 	}
 
 	@Override
