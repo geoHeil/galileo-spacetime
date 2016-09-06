@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 
 import galileo.serialization.ByteSerializable;
+import galileo.serialization.SerializationException;
 import galileo.serialization.SerializationInputStream;
 import galileo.serialization.SerializationOutputStream;
 
@@ -56,7 +57,7 @@ public class BlockArray implements ByteSerializable, Iterable<FileBlock> {
     }
 
     public BlockArray(SerializationInputStream in)
-    throws IOException {
+    throws IOException, SerializationException {
         int numBlocks = in.readInt();
         for (int i = 0; i < numBlocks; ++i) {
             FileBlock block = new FileBlock(in);

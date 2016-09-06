@@ -117,7 +117,7 @@ public class GeoavailabilityDemo {
         GeoavailabilityMap<String> gm
             = new GeoavailabilityMap<>("9x", 20);
 
-        GeospatialFileSystem gfs = new GeospatialFileSystem("/tmp/galileo");
+        GeospatialFileSystem gfs = new GeospatialFileSystem("/tmp/galileo", "samples");
 
         System.out.println("Adding points to Map");
         for (String str : metaMap.keySet()) {

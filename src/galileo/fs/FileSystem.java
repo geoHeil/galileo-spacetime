@@ -47,21 +47,24 @@ public abstract class FileSystem implements PhysicalGraph {
 
     public static final String BLOCK_EXTENSION = ".gblock";
 
+    protected String name;
     protected File storageDirectory;
     private boolean readOnly;
 
-    public FileSystem(String storageRoot)
+    public FileSystem(String storageRoot, String name)
     throws FileSystemException, IOException {
-        initialize(storageRoot);
+    	this.name = name;
+        initialize(storageRoot, name);
     }
 
-    protected void initialize(String storageRoot)
+    protected void initialize(String storageRoot, String name)
     throws FileSystemException, IOException {
         logger.info("Initializing Galileo File System.");
-        logger.info("Storage directory: " + storageRoot);
+        String directoryName = storageRoot + "/" + name;
+        logger.info("Storage directory: " + directoryName);
 
         /* Ensure the storage directory exists. */
-        storageDirectory = new File(storageRoot);
+        storageDirectory = new File(directoryName);
         if (!storageDirectory.exists()) {
             logger.warning("Root storage directory does not exist.  " +
                     "Attempting to create.");
@@ -70,6 +73,8 @@ public abstract class FileSystem implements PhysicalGraph {
                 throw new FileSystemException("Unable to create storage " +
                     "directory.");
             }
+        } else {
+        	throw new FileSystemException("A file system already exists for the given name.");
         }
 
         logger.info("Free space: " + getFreeSpace());

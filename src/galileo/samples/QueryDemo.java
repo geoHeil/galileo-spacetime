@@ -39,6 +39,7 @@ import galileo.query.Operation;
 import galileo.query.Query;
 
 import java.util.List;
+import java.util.Map;
 
 public class QueryDemo implements MessageListener {
 
@@ -57,24 +58,24 @@ public class QueryDemo implements MessageListener {
 			QueryResponse response = (QueryResponse) wrapper.unwrap(message);
 			System.out.println(response.getResults().size()
 					+ " results received");
-
-			System.out.println("First 10 results:");
-			List<Path<Feature, String>> results = response.getResults();
-			int limit = 10;
-			if (results.size() < 10) {
-				limit = results.size();
-			}
-			int counter = 0;
-			for (Path<Feature, String> path : results) {
-				if (path.size() > 1) {
-					System.out.println(path.getLabels());
-					counter++;
+			Map<String, List<Path<Feature, String>>> results = response.getResults();
+			for (String key : results.keySet()) {
+				System.out.println("First 5 results of " + key + ":");
+				int limit = 5;
+				if (results.size() < 5) {
+					limit = results.size();
 				}
-				if (counter == limit) {
-					break;
+				int counter = 0;
+				for (Path<Feature, String> path : results.get(key)) {
+					if (path.size() > 1) {
+						System.out.println(path);
+						counter++;
+					}
+					if (counter == limit) {
+						break;
+					}
 				}
 			}
-
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -101,13 +102,13 @@ public class QueryDemo implements MessageListener {
 		/* This query checks for total_precipitation values equal to 83.30055 */
 		Query q = new Query();
 		Operation o = new Operation(new Expression(
-				"==", new Feature("locality", "Pomona")));
+				">=", new Feature("ch4", 0.0f)));
 		q.addOperation(o);
 
 
 		System.out.println("Query 1: " + q);
 
-		QueryRequest qr = new QueryRequest(q);
+		QueryRequest qr = new QueryRequest("samples", q);
 		messageRouter.sendMessage(server, EventPublisher.wrapEvent(qr));
 	}
 }

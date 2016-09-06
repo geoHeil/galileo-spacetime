@@ -38,195 +38,221 @@ import galileo.serialization.SerializationOutputStream;
 
 public class Metadata implements ByteSerializable {
 
-    private String name = "";
+	private String name = "";
 
-    /**
-     * Metadata attributes: these Features are represented by a 1D array and
-     * are accessed as a simple key-value store.
-     */
-    private FeatureSet attributes = new FeatureSet();
+	/**
+	 * Metadata attributes: these Features are represented by a 1D array and are
+	 * accessed as a simple key-value store.
+	 */
+	private FeatureSet attributes = new FeatureSet();
 
-    /**
-     * A key-value store for multidimensional {@link FeatureArray}s.
-     */
-    private FeatureArraySet features = new FeatureArraySet();
+	/**
+	 * A key-value store for multidimensional {@link FeatureArray}s.
+	 */
+	private FeatureArraySet features = new FeatureArraySet();
 
-    /**
-     * Spatial information associated with this Metadata
-     */
-    private SpatialProperties spatialProperties = null;
+	/**
+	 * Spatial information associated with this Metadata
+	 */
+	private SpatialProperties spatialProperties = null;
 
-    /**
-     * Temporal information associated with this Metadata
-     */
-    private TemporalProperties temporalProperties = null;
+	/**
+	 * Temporal information associated with this Metadata
+	 */
+	private TemporalProperties temporalProperties = null;
 
-    /**
-     * Maintains metadata information that is only valid at system run time.
-     */
-    private RuntimeMetadata runtimeMetadata = new RuntimeMetadata();
+	/**
+	 * Spatial hint associated with this metadata. Helpful when creating spatial
+	 * properties from the block that this metadata is part of.
+	 */
+	private SpatialHint spatialHint;
 
-    /**
-     * Creates an unnamed Metadata instance
-     */
-    public Metadata() { }
+	/**
+	 * Maintains metadata information that is only valid at system run time.
+	 */
+	private RuntimeMetadata runtimeMetadata = new RuntimeMetadata();
 
-    /**
-     * Creates a named Metadata instance.
-     */
-    public Metadata(String name) {
-        this.name = name;
-    }
+	/**
+	 * Creates an unnamed Metadata instance
+	 */
+	public Metadata() {
+	}
 
-    public String getName() {
-        return name;
-    }
+	/**
+	 * Creates a named Metadata instance.
+	 */
+	public Metadata(String name) {
+		this.name = name;
+	}
 
-    public void setName(String name) {
-        if (name == null) {
-            this.name = "";
-        } else {
-            this.name = name;
-        }
-    }
+	public String getName() {
+		return name;
+	}
 
-    /**
-     * Places a single feature into this Metadata instance's attribute
-     * FeatureSet.
-     */
-    public void putAttribute(Feature feature) {
-        attributes.put(feature);
-    }
+	public void setName(String name) {
+		if (name == null) {
+			this.name = "";
+		} else {
+			this.name = name;
+		}
+	}
 
-    public Feature getAttribute(String featureName) {
-        return attributes.get(featureName);
-    }
+	/**
+	 * Places a single feature into this Metadata instance's attribute
+	 * FeatureSet.
+	 */
+	public void putAttribute(Feature feature) {
+		attributes.put(feature);
+	}
 
-    public FeatureSet getAttributes() {
-        return attributes;
-    }
+	public Feature getAttribute(String featureName) {
+		return attributes.get(featureName);
+	}
 
-    /**
-     * Sets this Metadata container's attribute FeatureSet.  This will eliminate
-     * any previously-added attributes.
-     *
-     * @param attributes {@link FeatureSet} containing attributes that should be
-     * associated with this Metadata instance.
-     */
-    public void setAttributes(FeatureSet attributes) {
-        this.attributes = attributes;
-    }
+	public FeatureSet getAttributes() {
+		return attributes;
+	}
 
-    public void putFeature(FeatureArray feature) {
-        features.put(feature);
-    }
+	/**
+	 * Sets this Metadata container's attribute FeatureSet. This will eliminate
+	 * any previously-added attributes.
+	 *
+	 * @param attributes
+	 *            {@link FeatureSet} containing attributes that should be
+	 *            associated with this Metadata instance.
+	 */
+	public void setAttributes(FeatureSet attributes) {
+		this.attributes = attributes;
+	}
 
-    public FeatureArray getFeature(String featureName) {
-        return features.get(featureName);
-    }
+	public void putFeature(FeatureArray feature) {
+		features.put(feature);
+	}
 
-    /**
-     * Sets this Metadata container's set of Feature arrays.  This will
-     * eliminate any previously-added Feature arrays.
-     *
-     * @param features {@link FeatureArraySet} containing features that should
-     * be associated with this Metadata instance.
-     */
-    public void setFeatures(FeatureArraySet features) {
-        this.features = features;
-    }
+	public FeatureArray getFeature(String featureName) {
+		return features.get(featureName);
+	}
 
-    public FeatureArraySet getFeatures() {
-        return features;
-    }
+	/**
+	 * Sets this Metadata container's set of Feature arrays. This will eliminate
+	 * any previously-added Feature arrays.
+	 *
+	 * @param features
+	 *            {@link FeatureArraySet} containing features that should be
+	 *            associated with this Metadata instance.
+	 */
+	public void setFeatures(FeatureArraySet features) {
+		this.features = features;
+	}
 
-    public void setSpatialProperties(SpatialProperties spatialProperties) {
-        this.spatialProperties = spatialProperties;
-    }
+	public FeatureArraySet getFeatures() {
+		return features;
+	}
 
-    public SpatialProperties getSpatialProperties() {
-        return this.spatialProperties;
-    }
+	public void setSpatialProperties(SpatialProperties spatialProperties) {
+		this.spatialProperties = spatialProperties;
+	}
 
-    public boolean hasSpatialProperties() {
-        return this.spatialProperties != null;
-    }
+	public SpatialProperties getSpatialProperties() {
+		return this.spatialProperties;
+	}
 
-    public void setTemporalProperties(TemporalProperties temporalProperties) {
-        this.temporalProperties = temporalProperties;
-    }
+	public SpatialHint getSpatialHint() {
+		return this.spatialHint;
+	}
 
-    public TemporalProperties getTemporalProperties() {
-        return this.temporalProperties;
-    }
+	public void setSpatialHint(SpatialHint spHint) {
+		this.spatialHint = spHint;
+	}
 
-    public boolean hasTemporalProperties() {
-        return this.temporalProperties != null;
-    }
+	public boolean hasSpatialProperties() {
+		return this.spatialProperties != null;
+	}
 
-    @Override
-    public String toString() {
-        String nl = System.lineSeparator();
-        String str = "Name: '" + name + "'" + nl
-            + "Contains Temporal Data: " + hasTemporalProperties() + nl;
-        if (hasTemporalProperties()) {
-            str += "Temporal Data Block:" + nl
-            + temporalProperties.toString() + nl;
-        }
+	public boolean hasSpatialHint() {
+		return this.spatialHint != null;
+	}
 
-        str += "Contains Spatial Data: " + hasSpatialProperties() + nl;
-        if (hasSpatialProperties()) {
-            str += "Spatial Data Block:" + nl
-            + spatialProperties.toString() + nl;
-        }
+	public void setTemporalProperties(TemporalProperties temporalProperties) {
+		this.temporalProperties = temporalProperties;
+	}
 
-        str += "Number of Attributes: " + attributes.size() + nl;
-        for (Feature f : attributes) {
-            str += f.toString() + nl;
-        }
+	public TemporalProperties getTemporalProperties() {
+		return this.temporalProperties;
+	}
 
-        str += "Number of ND Feature Arrays: " + features.size() + nl;
+	public boolean hasTemporalProperties() {
+		return this.temporalProperties != null;
+	}
 
-        return str;
-    }
+	@Override
+	public String toString() {
+		String nl = System.lineSeparator();
+		String str = "Name: '" + name + "'" + nl + "Contains Temporal Data: " + hasTemporalProperties() + nl;
+		if (hasTemporalProperties()) {
+			str += "Temporal Data Block:" + nl + temporalProperties.toString() + nl;
+		}
 
-    @Deserialize
-    public Metadata(SerializationInputStream in)
-    throws IOException, SerializationException {
-        name = in.readString();
+		str += "Contains Spatial Data: " + hasSpatialProperties() + nl;
+		if (hasSpatialProperties()) {
+			str += "Spatial Data Block:" + nl + spatialProperties.toString() + nl;
+		}
 
-        boolean temporal = in.readBoolean();
-        if (temporal) {
-            temporalProperties = new TemporalProperties(in);
-        }
+		str += "Number of Attributes: " + attributes.size() + nl;
+		for (Feature f : attributes) {
+			str += f.toString() + nl;
+		}
 
-        boolean spatial = in.readBoolean();
-        if (spatial) {
-            spatialProperties = new SpatialProperties(in);
-        }
+		str += "Number of ND Feature Arrays: " + features.size() + nl;
 
-        attributes = new FeatureSet(in);
-        features = new FeatureArraySet(in);
-        runtimeMetadata = new RuntimeMetadata(in);
-    }
+		return str;
+	}
 
-    @Override
-    public void serialize(SerializationOutputStream out)
-    throws IOException {
-        out.writeString(name);
+	@Deserialize
+	public Metadata(SerializationInputStream in) throws IOException, SerializationException {
+		name = in.readString();
 
-        out.writeBoolean(hasTemporalProperties());
-        if (hasTemporalProperties()) {
-            out.writeSerializable(temporalProperties);
-        }
+		boolean temporal = in.readBoolean();
+		if (temporal) {
+			temporalProperties = new TemporalProperties(in);
+		}
 
-        out.writeBoolean(hasSpatialProperties());
-        if (hasSpatialProperties()) {
-            out.writeSerializable(spatialProperties);
-        }
+		boolean spatial = in.readBoolean();
+		if (spatial) {
+			spatialProperties = new SpatialProperties(in);
+		}
 
-        out.writeSerializable(attributes);
-        out.writeSerializable(features);
-        out.writeSerializable(runtimeMetadata);
-    }
+		boolean sHint = in.readBoolean();
+		if (sHint) {
+			spatialHint = new SpatialHint(in);
+		}
+
+		attributes = new FeatureSet(in);
+		features = new FeatureArraySet(in);
+		runtimeMetadata = new RuntimeMetadata(in);
+	}
+
+	@Override
+	public void serialize(SerializationOutputStream out) throws IOException {
+		out.writeString(name);
+
+		out.writeBoolean(hasTemporalProperties());
+		if (hasTemporalProperties()) {
+			out.writeSerializable(temporalProperties);
+		}
+
+		out.writeBoolean(hasSpatialProperties());
+		if (hasSpatialProperties()) {
+			out.writeSerializable(spatialProperties);
+		}
+
+		out.writeBoolean(hasSpatialHint());
+		if (hasSpatialHint()) {
+			out.writeSerializable(spatialHint);
+		}
+
+		out.writeSerializable(attributes);
+		out.writeSerializable(features);
+		out.writeSerializable(runtimeMetadata);
+	}
 }

@@ -135,7 +135,7 @@ public class RandomBlocks {
         byte[] blockData = new byte[8000];
         r.nextBytes(blockData);
 
-        Block b = new Block(metadata, blockData);
+        Block b = new Block("samples", metadata, blockData);
 
         return b;
     }

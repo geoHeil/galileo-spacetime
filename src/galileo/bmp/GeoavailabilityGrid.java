@@ -75,8 +75,8 @@ public class GeoavailabilityGrid {
          * base spatial range this geoavailability grid represents */
         float xDegrees = baseRange.getUpperBoundForLongitude()
             - baseRange.getLowerBoundForLongitude();
-        float yDegrees = baseRange.getLowerBoundForLatitude()
-            - baseRange.getUpperBoundForLatitude();
+        float yDegrees = baseRange.getUpperBoundForLatitude()
+            - baseRange.getLowerBoundForLatitude();
 
         /* Determine the number of degrees represented by each grid pixel */
         xDegreesPerPixel = xDegrees / (float) this.width;
@@ -134,7 +134,7 @@ public class GeoavailabilityGrid {
         float xDiff = coords.getLongitude()
             - baseRange.getLowerBoundForLongitude();
 
-        float yDiff = baseRange.getLowerBoundForLatitude()
+        float yDiff = baseRange.getUpperBoundForLatitude()
             - coords.getLatitude();
 
         int x = (int) (xDiff / xDegreesPerPixel);
@@ -170,6 +170,7 @@ public class GeoavailabilityGrid {
     /**
      * Converts an X, Y grid point to the corresponding SpatialRange that the
      * grid point spans.
+     * (0, 0) indicates (90, -180)
      */
     public SpatialRange XYtoSpatialRange(int x, int y) {
         if (x < 0 || x >= this.width || y < 0 || y >= this.height) {
@@ -178,12 +179,12 @@ public class GeoavailabilityGrid {
         }
 
         float baseLon = baseRange.getLowerBoundForLongitude();
-        float baseLat = baseRange.getLowerBoundForLatitude();
+        float baseLat = baseRange.getUpperBoundForLatitude();
 
         float lowerLon = baseLon + (x * xDegreesPerPixel);
         float upperLon = lowerLon + xDegreesPerPixel;
-        float lowerLat = baseLat - (y * yDegreesPerPixel);
-        float upperLat = lowerLat - yDegreesPerPixel;
+        float upperLat = baseLat - (y * yDegreesPerPixel);
+        float lowerLat = upperLat - yDegreesPerPixel;
 
         return new SpatialRange(lowerLat, upperLat, lowerLon, upperLon);
     }

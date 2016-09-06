@@ -25,9 +25,10 @@ software, even if advised of the possibility of such damage.
 
 package galileo.bmp;
 
-import galileo.dataset.Coordinates;
-
 import java.util.List;
+
+import galileo.dataset.Coordinates;
+import galileo.query.Query;
 
 /**
  * Encapsulates a GeoavailabilityGrid query: a list of a coordinates that form
@@ -38,12 +39,22 @@ import java.util.List;
 public class GeoavailabilityQuery {
 
     private List<Coordinates> polygon;
+    private Query query;
 
     public GeoavailabilityQuery(List<Coordinates> polygon) {
         this.polygon = polygon;
     }
+    
+    public GeoavailabilityQuery(Query query, List<Coordinates> polygon) {
+        this.query = query;
+    	this.polygon = polygon;
+    }
 
     public List<Coordinates> getPolygon() {
         return polygon;
+    }
+    
+    public Query getQuery() {
+    	return this.query;
     }
 }

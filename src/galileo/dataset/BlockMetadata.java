@@ -29,6 +29,7 @@ import java.io.IOException;
 
 import galileo.dataset.feature.FeatureSet;
 import galileo.serialization.ByteSerializable;
+import galileo.serialization.SerializationException;
 import galileo.serialization.SerializationInputStream;
 import galileo.serialization.SerializationOutputStream;
 
@@ -107,7 +108,7 @@ public class BlockMetadata implements ByteSerializable {
 
     @Deserialize
     public BlockMetadata(SerializationInputStream in)
-    throws IOException {
+    throws IOException, SerializationException {
         name = new String(in.readString());
         temporalProperties = new TemporalProperties(in);
         spatialProperties = new SpatialProperties(in);

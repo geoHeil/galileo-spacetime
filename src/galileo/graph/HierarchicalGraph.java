@@ -25,7 +25,6 @@ software, even if advised of the possibility of such damage.
 
 package galileo.graph;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -33,11 +32,15 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.NavigableMap;
-import java.util.logging.Logger;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.NavigableMap;
 import java.util.Queue;
 import java.util.Set;
+import java.util.logging.Logger;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import galileo.dataset.feature.Feature;
 import galileo.dataset.feature.FeatureType;
@@ -122,8 +125,17 @@ public class HierarchicalGraph<T> {
         return paths;
     }
     
-    public List<String> getFeaturesList(){
-    	return new ArrayList<String>(features);
+    public JSONArray getFeaturesJSON(){
+    	Set<Entry<String, Level>> entries = levels.entrySet();
+    	JSONArray features = new JSONArray();
+    	for(Entry<String, Level> e : entries){
+    		JSONObject feature = new JSONObject();
+    		feature.put("name", e.getKey());
+    		feature.put("type", e.getValue().type.name());
+    		feature.put("order", e.getValue().order);
+    		features.put(feature);
+    	}
+    	return features;
     }
 
     public List<Path<Feature, T>> evaluateQuery(
@@ -186,7 +198,6 @@ public class HierarchicalGraph<T> {
             List<Expression> expressions, Vertex<Feature, T> vertex) {
 
         Set<Vertex<Feature, T>> resultSet = null;
-        boolean firstResult = true;
 
         for (Expression expression : expressions) {
             Set<Vertex<Feature, T>> evalSet = new HashSet<>();
@@ -258,7 +269,7 @@ public class HierarchicalGraph<T> {
                                 expression.toString()} );
             }
 
-            if (firstResult) {
+            if (resultSet == null) {
                 /* If this is the first Expression we've evaluated, then the
                  * evaluation set becomes our result set that will be further
                  * reduced as more Expressions are evaluated. */
@@ -318,6 +329,7 @@ public class HierarchicalGraph<T> {
         path.get(path.size() - 1).addValues(path.getPayload());
 
         root.addPath(path.iterator());
+        //logger.info(root.toString());
     }
 
     /**
@@ -469,7 +481,6 @@ public class HierarchicalGraph<T> {
      * Update the hierarchy levels and known Feature list with a new Feature.
      */
     private int addNewFeature(String name, FeatureType type) {
-        logger.info("New feature: " + name + ", type: " + type);
         Integer order = levels.keySet().size();
         levels.put(name, new Level(order, type));
         features.offer(name);

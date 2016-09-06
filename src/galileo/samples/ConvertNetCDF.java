@@ -142,7 +142,7 @@ public class ConvertNetCDF {
         addIndexField("snow_depth", meta, m);
         m.setTemporalProperties(meta.getTemporalProperties());
         m.setSpatialProperties(meta.getSpatialProperties());
-        Block block = new Block(m, Serializer.serialize(meta));
+        Block block = new Block("samples", m, Serializer.serialize(meta));
         return block;
     }
 

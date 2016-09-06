@@ -261,13 +261,51 @@ public class Feature implements Comparable<Feature>, ByteSerializable {
                         + "FeatureData");
         }
     }
+    
+    
+    /**
+     * Converts a given String to a Feature if the String type is not known in
+     * advance but the type of the feature is known.  This is done by casting the 
+     * given String to the given type.  In general, this method should only be 
+     * used in special cases where a feature type cannot be inferred from String type.
+     *
+     * @param name Name of the resulting Feature
+     * @param type Type of the resulting Feature
+     * @param s String to convert to a Feature
+     */
+    public static Feature fromType(String name, int type, String s) {
+        FeatureType ftype = FeatureType.fromInt(type);
+        if (ftype == null) {
+            throw new IllegalArgumentException("Cannot construct a Feature "
+                    + "from this type.");
+        }
+        
+        try{
+        	switch (ftype) {
+            case INT: return new Feature(name, Integer.parseInt(s));
+            case LONG: return new Feature(name, Long.parseLong(s));
+            case FLOAT: return new Feature(name, Float.parseFloat(s));
+            case DOUBLE: return new Feature(name, Double.parseDouble(s));
+            case STRING: return new Feature(name, s);
+            default:
+                throw new IllegalArgumentException("Could not instantiate "
+                        + "FeatureData");
+        }
+        } catch(NumberFormatException nfe){
+        	throw new IllegalArgumentException("Could not instantiate feature data. "
+        			+ "Failed to convert the value to given type(s="+s+", type="+ftype.toClass().getName()+")");
+        } catch(Exception e){
+        	throw new IllegalArgumentException("Could not instantiate "
+                    + "FeatureData. Details - " + e.getMessage());
+        }
+    }
 
     public String getName() {
         return name;
     }
 
     private void setName(String name) {
-        this.name = name;
+        this.name = name.intern();
     }
 
     public FeatureType getType() {

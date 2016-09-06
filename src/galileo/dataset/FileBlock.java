@@ -103,9 +103,10 @@ public class FileBlock implements ByteSerializable {
      * Construct a complete FileBlock (including metadata) from a byte stream.
      *
      * @param in Stream to construct the FileBlock from.
+     * @throws SerializationException 
      */
     public FileBlock(SerializationInputStream in)
-    throws IOException {
+    throws IOException, SerializationException {
         metadata = new BlockMetadata(in);
         data = in.readField();
     }

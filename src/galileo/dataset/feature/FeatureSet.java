@@ -25,17 +25,17 @@ software, even if advised of the possibility of such damage.
 
 package galileo.dataset.feature;
 
+import java.io.IOException;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 import galileo.serialization.ByteSerializable;
 import galileo.serialization.SerializationException;
 import galileo.serialization.SerializationInputStream;
 import galileo.serialization.SerializationOutputStream;
-
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 /**
  * Contains a set of {@link Feature}s.
@@ -46,7 +46,7 @@ public class FeatureSet implements ByteSerializable, Iterable<Feature> {
 
     private static final Logger logger = Logger.getLogger("galileo");
 
-    private Map<String, Feature> features = new HashMap<String, Feature>();
+    private Map<String, Feature> features = new LinkedHashMap<String, Feature>();
 
     public FeatureSet() { }
 
@@ -57,7 +57,7 @@ public class FeatureSet implements ByteSerializable, Iterable<Feature> {
     public Feature get(String name) {
         return features.get(name);
     }
-
+    
     @Override
     public Iterator<Feature> iterator() {
         return features.values().iterator();

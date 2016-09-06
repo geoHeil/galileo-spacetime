@@ -25,16 +25,39 @@ software, even if advised of the possibility of such damage.
 
 package galileo.dht;
 
-import galileo.bmp.GeoavailabilityMap;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import galileo.bmp.GeoavailabilityQuery;
+import galileo.comm.FileSystemAction;
+import galileo.comm.FileSystemEvent;
+import galileo.comm.FileSystemRequest;
 import galileo.comm.GalileoEventMap;
-import galileo.comm.GenericEvent;
-import galileo.comm.GenericEventType;
-import galileo.comm.GenericRequest;
-import galileo.comm.GenericResponse;
-import galileo.comm.GeoQueryEvent;
-import galileo.comm.GeoQueryRequest;
-import galileo.comm.GeoQueryResponse;
+import galileo.comm.MetaEvent;
+import galileo.comm.MetaRequest;
+import galileo.comm.MetaResponse;
 import galileo.comm.QueryEvent;
 import galileo.comm.QueryRequest;
 import galileo.comm.QueryResponse;
@@ -42,8 +65,9 @@ import galileo.comm.StorageEvent;
 import galileo.comm.StorageRequest;
 import galileo.config.SystemConfig;
 import galileo.dataset.Block;
-import galileo.dataset.Coordinates;
 import galileo.dataset.Metadata;
+import galileo.dataset.SpatialProperties;
+import galileo.dataset.SpatialRange;
 import galileo.dataset.feature.Feature;
 import galileo.dht.hash.HashException;
 import galileo.dht.hash.HashTopologyException;
@@ -60,23 +84,8 @@ import galileo.net.NetworkDestination;
 import galileo.net.PortTester;
 import galileo.net.RequestListener;
 import galileo.net.ServerMessageRouter;
-import galileo.util.GeoHash;
+import galileo.serialization.SerializationException;
 import galileo.util.Version;
-
-import java.io.File;
-import java.io.IOException;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 /**
  * Primary communication component in the Galileo DHT. StorageNodes service
@@ -88,26 +97,21 @@ import java.util.logging.Logger;
 public class StorageNode implements RequestListener {
 
 	private static final Logger logger = Logger.getLogger("galileo");
-	private static final int GEO_MAP_PRECISION = 20;
-	private static final String LOCALITY = "locality";
-	private static final String ZIP = "postal_code";
-	private static final String LOCALITY_REGEX = "[a-zA-Z\\-]+";
-	private static final String ZIP_REGEX = "\\d+";
 	private StatusLine nodeStatus;
-	
-	private String hostname; //The name of this host
+
+	private String hostname; // The name of this host
 	private int port;
 	private String rootDir;
+	private String resultsDir;
 
 	private File pidFile;
 
 	private NetworkInfo network;
-	private GroupInfo snGroup; //Group of this storage node in DHT
+	private GroupInfo snGroup; // Group of this storage node in DHT
 
 	private ServerMessageRouter messageRouter;
 	private ClientConnectionPool connectionPool;
-	private GeospatialFileSystem fs;
-	private HashMap<String, GeoavailabilityMap<Metadata>> geoMap;
+	private Map<String, GeospatialFileSystem> fsMap;
 
 	private GalileoEventMap eventMap = new GalileoEventMap();
 	private EventReactor eventReactor = new EventReactor(this, eventMap);
@@ -116,8 +120,6 @@ public class StorageNode implements RequestListener {
 	private Partitioner<Metadata> partitioner;
 
 	private ConcurrentHashMap<String, QueryTracker> queryTrackers = new ConcurrentHashMap<>();
-	//Locality information that this node stores. Needed for Columbus.
-	private HashMap<String, String> localities;
 
 	// private String sessionId;
 
@@ -126,22 +128,21 @@ public class StorageNode implements RequestListener {
 			this.hostname = InetAddress.getLocalHost().getHostName();
 		} catch (UnknownHostException e) {
 			this.hostname = System.getenv("HOSTNAME");
-			if(hostname == null || hostname.length() == 0)
-				throw new UnknownHostException("Failed to identify host name of the storage node. Details follow: " + e.getMessage());
+			if (hostname == null || hostname.length() == 0)
+				throw new UnknownHostException(
+						"Failed to identify host name of the storage node. Details follow: " + e.getMessage());
 		}
 		this.hostname = this.hostname.toLowerCase();
 		this.port = NetworkConfig.DEFAULT_PORT;
+		SystemConfig.reload();
 		this.rootDir = SystemConfig.getRootDir();
-
-		// this.sessionId = HostIdentifier.getSessionId(port);
+		this.resultsDir = this.rootDir + "/.results";
 		nodeStatus = new StatusLine(SystemConfig.getRootDir() + "/status.txt");
-		this.geoMap = new HashMap<String, GeoavailabilityMap<Metadata>>();
 		String pid = System.getProperty("pidFile");
 		if (pid != null) {
 			this.pidFile = new File(pid);
 		}
 		this.requestHandlers = new CopyOnWriteArrayList<ClientRequestHandler>();
-		this.localities = new HashMap<String, String>();
 	}
 
 	/**
@@ -160,38 +161,34 @@ public class StorageNode implements RequestListener {
 			throw new IOException("Could not bind to port " + port);
 		}
 
+		nodeStatus.set("Setting up filesystem");
+		File resultsDir = new File(this.resultsDir);
+		if (!resultsDir.exists())
+			resultsDir.mkdirs();
+
 		/*
 		 * Read the network configuration; if this is invalid, there is no need
 		 * to execute the rest of this method.
 		 */
 		nodeStatus.set("Reading network configuration");
-		network = NetworkConfig.readNetworkDescription(SystemConfig
-				.getNetworkConfDir());
+		network = NetworkConfig.readNetworkDescription(SystemConfig.getNetworkConfDir());
 		List<GroupInfo> groups = network.getGroups();
-		//identifying the group of this storage node
-		outer: for(GroupInfo group : groups){
+		// identifying the group of this storage node
+		outer: for (GroupInfo group : groups) {
 			List<NodeInfo> nodes = group.getNodes();
-			for(NodeInfo node : nodes){
-				if(node.getHostname().equalsIgnoreCase(this.hostname)){
-					this.snGroup = group; //setting the group of this storage node.
+			for (NodeInfo node : nodes) {
+				if (node.getHostname().equalsIgnoreCase(this.hostname)) {
+					this.snGroup = group; // setting the group of this storage
+											// node.
 					break outer;
 				}
 			}
 		}
-		if(this.snGroup == null)
-			throw new Exception("Failed to identify the group of the storage node. Type 'hostname' in the terminal and make sure that it matches the hostnames specified in the network configuration files.");
+		if (this.snGroup == null)
+			throw new Exception(
+					"Failed to identify the group of the storage node. Type 'hostname' in the terminal and make sure that it matches the hostnames specified in the network configuration files.");
 
-		/* Set up the FileSystem. */
-		nodeStatus.set("Initializing file system");
-		try {
-			fs = new GeospatialFileSystem(rootDir);
-		} catch (FileSystemException e) {
-			nodeStatus.set("File system initialization failure");
-			logger.log(Level.SEVERE,
-					"Could not initialize the Galileo File System!", e);
-			return;
-		}
-
+		this.fsMap = new HashMap<>();
 		nodeStatus.set("Initializing communications");
 
 		/* Set up our Shutdown hook */
@@ -213,30 +210,84 @@ public class StorageNode implements RequestListener {
 			try {
 				eventReactor.processNextEvent();
 			} catch (Exception e) {
-				logger.log(
-						Level.SEVERE,
+				logger.log(Level.SEVERE,
 						"An exception occurred while processing next event. Storage node is still up and running. Exception details follow:",
 						e);
 			}
 		}
 	}
 
-	private void configurePartitioner() throws HashException,
-			HashTopologyException, PartitionException {
-		String[] geohashes = { "8g", "8u", "8v", "8x", "8y", "8z", "94", "95",
-				"96", "97", "9d", "9e", "9g", "9h", "9j", "9k", "9m", "9n",
-				"9p", "9q", "9r", "9s", "9t", "9u", "9v", "9w", "9x", "9y",
-				"9z", "b8", "b9", "bb", "bc", "bf", "c0", "c1", "c2", "c3",
-				"c4", "c6", "c8", "c9", "cb", "cc", "cd", "cf", "d4", "d5",
-				"d6", "d7", "dd", "de", "dh", "dj", "dk", "dm", "dn", "dp",
-				"dq", "dr", "ds", "dt", "dw", "dx", "dz", "f0", "f1", "f2",
-				"f3", "f4", "f6", "f8", "f9", "fb", "fc", "fd", "ff" };
-
-		partitioner = new SpatialHierarchyPartitioner(this, network, geohashes);
+	private void configurePartitioner() throws HashException, HashTopologyException, PartitionException {
+		String partitionType = System.getProperty("galileo.group.partitioning", "temporal");
+		if ("temporal".equalsIgnoreCase(partitionType)) {
+			String temporalType = System.getProperty("galileo.group.partitioning.temporal",
+					String.valueOf(Calendar.DAY_OF_MONTH));
+			partitioner = new TemporalHierarchyPartitioner(this, network, Integer.parseInt(temporalType));
+		} else {
+			String[] geohashes = { "8g", "8u", "8v", "8x", "8y", "8z", "94", "95", "96", "97", "9d", "9e", "9g", "9h",
+					"9j", "9k", "9m", "9n", "9p", "9q", "9r", "9s", "9t", "9u", "9v", "9w", "9x", "9y", "9z", "b8",
+					"b9", "bb", "bc", "bf", "c0", "c1", "c2", "c3", "c4", "c6", "c8", "c9", "cb", "cc", "cd", "cf",
+					"d4", "d5", "d6", "d7", "dd", "de", "dh", "dj", "dk", "dm", "dn", "dp", "dq", "dr", "ds", "dt",
+					"dw", "dx", "dz", "f0", "f1", "f2", "f3", "f4", "f6", "f8", "f9", "fb", "fc", "fd", "ff" };
+			partitioner = new SpatialHierarchyPartitioner(this, network, geohashes);
+		}
 	}
 
 	private void sendEvent(NodeInfo node, Event event) throws IOException {
 		connectionPool.sendMessage(node, eventReactor.wrapEvent(event));
+	}
+
+	@EventHandler
+	public void handleFileSystemRequest(FileSystemRequest request, EventContext context)
+			throws HashException, IOException, PartitionException {
+		String name = request.getName();
+		FileSystemAction action = request.getAction();
+		List<NodeInfo> nodes = network.getAllNodes();
+		FileSystemEvent event = new FileSystemEvent(name, action);
+		for (NodeInfo node : nodes) {
+			logger.info("Requesting " + node + " to perform a file system action");
+			sendEvent(node, event);
+		}
+	}
+
+	@EventHandler
+	public void handleFileSystem(FileSystemEvent event, EventContext context) throws FileSystemException, IOException {
+		logger.log(Level.INFO,
+				"Performing action " + event.getAction().getAction() + " for file system " + event.getName());
+		if (event.getAction() == FileSystemAction.CREATE) {
+			GeospatialFileSystem fs = fsMap.get(event.getName());
+			if (fs == null) {
+				try {
+					fs = new GeospatialFileSystem(rootDir, event.getName());
+					fsMap.put(event.getName(), fs);
+				} catch (FileSystemException | SerializationException e) {
+					nodeStatus.set("File system initialization failure");
+					logger.log(Level.SEVERE, "Could not initialize the Galileo File System!", e);
+				}
+			}
+		} else if (event.getAction() == FileSystemAction.DELETE) {
+			GeospatialFileSystem fs = fsMap.get(event.getName());
+			if (fs != null) {
+				fs.shutdown();
+				fsMap.remove(event.getName());
+				java.nio.file.Path directory = Paths.get(rootDir + File.separator + event.getName());
+				Files.walkFileTree(directory, new SimpleFileVisitor<java.nio.file.Path>() {
+					@Override
+					public FileVisitResult visitFile(java.nio.file.Path file, BasicFileAttributes attrs)
+							throws IOException {
+						Files.delete(file);
+						return FileVisitResult.CONTINUE;
+					}
+
+					@Override
+					public FileVisitResult postVisitDirectory(java.nio.file.Path dir, IOException exc)
+							throws IOException {
+						Files.delete(dir);
+						return FileVisitResult.CONTINUE;
+					}
+				});
+			}
+		}
 	}
 
 	/**
@@ -245,10 +296,8 @@ public class StorageNode implements RequestListener {
 	 * forwarding the data on to its destination.
 	 */
 	@EventHandler
-	public void handleStorageRequest(StorageRequest request,
-			EventContext context) throws HashException, IOException,
-			PartitionException {
-
+	public void handleStorageRequest(StorageRequest request, EventContext context)
+			throws HashException, IOException, PartitionException {
 		/* Determine where this block goes. */
 		Block file = request.getBlock();
 		Metadata metadata = file.getMetadata();
@@ -259,221 +308,264 @@ public class StorageNode implements RequestListener {
 	}
 
 	@EventHandler
-	public void handleStorage(StorageEvent store, EventContext context)
-			throws FileSystemException, IOException {
-		logger.log(Level.INFO, "Storing block: {0}", store.getBlock());
-		Block file = store.getBlock();
-		Metadata metadata = file.getMetadata();
-		String geoHash = GeoHash.encode(metadata.getSpatialProperties().getCoordinates(), GEO_MAP_PRECISION);
-		String basegh = geoHash.substring(0, 2);
-		logger.log(Level.INFO, "Geohash of the block: {0}", basegh);
-		GeoavailabilityMap<Metadata> map = this.geoMap.get(basegh);
-		if(map == null){
-			map = new GeoavailabilityMap<Metadata>(basegh, GEO_MAP_PRECISION);
-			this.geoMap.put(basegh, map);
-		}
-		boolean added = map.addPoint(metadata.getSpatialProperties().getCoordinates(), metadata);
-		if(added){
-			logger.log(Level.INFO, "Metadata added to the GeoMap({0})", basegh);
-			String locality = metadata.getAttribute(LOCALITY).getString();
-			String zip = metadata.getAttribute(ZIP).getString();
-			if(locality.matches(LOCALITY_REGEX) && zip.matches(ZIP_REGEX))
-				this.localities.put(zip, locality);
+	public void handleStorage(StorageEvent store, EventContext context) throws FileSystemException, IOException {
+		String fsName = store.getBlock().getFileSystem();
+		GeospatialFileSystem fs = fsMap.get(fsName);
+		if (fs != null) {
+			logger.log(Level.INFO, "Storing block " + store.getBlock() + " to filesystem " + fsName);
 			fs.storeBlock(store.getBlock());
+		} else {
+			logger.log(Level.SEVERE, "Requested file system(" + fsName + ") not found. Ignoring the block.");
 		}
 	}
 
 	/**
-	 * Handles a generic request that seeks information regarding the galileo
+	 * Handles a meta request that seeks information regarding the galileo
 	 * system.
 	 */
 	@EventHandler
-	public void handleGenericRequest(GenericRequest request,
-			EventContext context) throws IOException {
-		logger.info("Generic Request: " + request.getEventType());
-		if (request.getEventType() == GenericEventType.FEATURES) {
-			GenericEvent gEvent = new GenericEvent(request.getEventType());
-			ClientRequestHandler reqHandler = new ClientRequestHandler(
-					network.getAllDestinations(), context, this);
-			reqHandler.handleRequest(gEvent,
-					new GenericResponse(request.getEventType(),
-							new HashSet<String>()));
-			this.requestHandlers.add(reqHandler);
-		} else if (request.getEventType() == GenericEventType.LOCALITY) {
-			GenericEvent gEvent = new GenericEvent(request.getEventType());
-			ClientRequestHandler reqHandler = new ClientRequestHandler(
-					network.getAllDestinations(), context, this);
-			reqHandler.handleRequest(gEvent,
-					new GenericResponse(request.getEventType(),
-							new HashMap<String, String>()));
-			this.requestHandlers.add(reqHandler);
+	public void handleMetaRequest(MetaRequest request, EventContext context) throws IOException {
+		try {
+			logger.info("Meta Request: " + request.getRequest().getString("kind"));
+			if ("galileo#filesystem".equalsIgnoreCase(request.getRequest().getString("kind"))) {
+				JSONObject response = new JSONObject();
+				response.put("kind", "galileo#filesystem");
+				JSONArray names = new JSONArray();
+				for(String fsName : fsMap.keySet()){
+					GeospatialFileSystem fs = fsMap.get(fsName);
+					names.put(new JSONObject().put("name", fsName).put("lastModified", fs.getLastUpdated()).put("readOnly", fs.isReadOnly()));
+				}
+				response.put("result", names);
+				context.sendReply(new MetaResponse(response));
+			} else if ("galileo#features".equalsIgnoreCase(request.getRequest().getString("kind"))) {
+				JSONObject response = new JSONObject();
+				response.put("kind", "galileo#filesystem");
+				response.put("result", new JSONArray());
+				ClientRequestHandler reqHandler = new ClientRequestHandler(network.getAllDestinations(), context, this);
+				reqHandler.handleRequest(new MetaEvent(request.getRequest()), new MetaResponse(response));
+				this.requestHandlers.add(reqHandler);
+			} else {
+				JSONObject response = new JSONObject();
+				response.put("kind", request.getRequest().getString("kind"));
+				response.put("error", "invalid request");
+				context.sendReply(new MetaResponse(response));
+			}
+		} catch (Exception e) {
+			JSONObject response = new JSONObject();
+			String kind = "unknown";
+			if (request.getRequest().has("kind"))
+				kind = request.getRequest().getString("kind");
+			response.put("kind", kind);
+			response.put("error", e.getMessage());
+			context.sendReply(new MetaResponse(response));
 		}
 	}
 
 	@EventHandler
-	public void handleGenericEvent(GenericEvent genericEvent,
-			EventContext context) throws IOException {
-		GenericEventType eventType = genericEvent.getEventType();
-		if (eventType == GenericEventType.FEATURES) {
-			logger.info("Retreiving features list");
-			Set<String> features = new HashSet<String>();
-			features.addAll(fs.getFeaturesList());
-			logger.info("Features : " + features);
-			GenericResponse response = new GenericResponse(eventType, features);
-			context.sendReply(response);
-		} else if (eventType == GenericEventType.LOCALITY) {
-			logger.info("Retreiving locality list");
-			HashMap<String, String> localityMap = new HashMap<String, String>(this.localities);
-			logger.info("localities : " + localityMap);
-			GenericResponse response = new GenericResponse(eventType, localityMap);
-			context.sendReply(response);
+	public void handleMeta(MetaEvent event, EventContext context) throws IOException {
+		if ("galileo#features".equalsIgnoreCase(event.getRequest().getString("kind"))) {
+			JSONObject request = event.getRequest();
+			JSONObject response = new JSONObject();
+			response.put("kind", "galileo#features");
+			JSONArray result = new JSONArray();
+			if (request.has("filesystem") && request.get("filesystem") instanceof JSONArray) {
+				JSONArray fsNames = request.getJSONArray("filesystem");
+				for (int i = 0; i < fsNames.length(); i++) {
+					GeospatialFileSystem fs = fsMap.get(fsNames.getString(i));
+					if (fs != null) {
+						JSONArray features = fs.getFeaturesJSON();
+						JSONObject fsFeatures = new JSONObject();
+						fsFeatures.put(fsNames.getString(i), features);
+						result.put(fsFeatures);
+					} else {
+						JSONObject fsFeatures = new JSONObject();
+						fsFeatures.put(fsNames.getString(i), new JSONArray());
+						result.put(fsFeatures);
+					}
+				}
+			} else {
+				for (String fsName : fsMap.keySet()) {
+					GeospatialFileSystem fs = fsMap.get(fsName);
+					if (fs != null) {
+						JSONArray features = fs.getFeaturesJSON();
+						JSONObject fsFeatures = new JSONObject();
+						fsFeatures.put(fsName, features);
+						result.put(fsFeatures);
+					} else {
+						JSONObject fsFeatures = new JSONObject();
+						fsFeatures.put(fsName, new JSONArray());
+						result.put(fsFeatures);
+					}
+				}
+			}
+			response.put("result", result);
+			context.sendReply(new MetaResponse(response));
 		}
+		JSONObject response = new JSONObject();
+		response.put("kind", event.getRequest().getString("kind"));
+		response.put("result", new JSONArray());
+		context.sendReply(new MetaResponse(response));
 	}
 
 	/**
 	 * Handles a query request from a client. Query requests result in a number
 	 * of subqueries being performed across the Galileo network.
+	 * 
+	 * @throws PartitionException
+	 * @throws HashException
 	 */
 	@EventHandler
 	public void handleQueryRequest(QueryRequest request, EventContext context)
-			throws IOException {
+			throws IOException, HashException, PartitionException {
 		String queryString = request.getQueryString();
 		logger.log(Level.INFO, "Query request: {0}", queryString);
+		Metadata data = new Metadata();
+		if (request.isTemporal()){
+			logger.log(Level.INFO, "Temporal query: {0}", request.getTemporalProperties());
+			data.setTemporalProperties(request.getTemporalProperties());
+		}
+		if (request.isSpatial()){
+			logger.log(Level.INFO, "Spatial query: {0}", request.getPolygon());
+			data.setSpatialProperties(new SpatialProperties(new SpatialRange(request.getPolygon())));
+		}
+		List<NodeInfo> nodes = partitioner.findDestinations(data);
+		logger.info("destinations: " + nodes);
 		String queryId = String.valueOf(System.currentTimeMillis());
-		QueryEvent qEvent = new QueryEvent(queryId, request.getQuery());
-		ClientRequestHandler reqHandler = new ClientRequestHandler(
-				network.getAllDestinations(), context, this);
-		QueryResponse response = new QueryResponse(queryId,
-				new ArrayList<Path<Feature, String>>());
+		QueryEvent qEvent = request.hasQuery()
+				? new QueryEvent(queryId, request.getFileSystemName(), request.getTemporalProperties(),
+						request.getPolygon(), request.getQuery(), request.isInteractive())
+				: new QueryEvent(queryId, request.getFileSystemName(), request.getTemporalProperties(),
+						request.getPolygon(), request.isInteractive());
+		ClientRequestHandler reqHandler = new ClientRequestHandler(new ArrayList<NetworkDestination>(nodes), context,
+				this);
+		QueryResponse response = request.isInteractive()
+				? new QueryResponse(queryId, new HashMap<String, List<Path<Feature, String>>>())
+				: new QueryResponse(queryId, new JSONObject());
 		reqHandler.handleRequest(qEvent, response);
 		this.requestHandlers.add(reqHandler);
+	}
+
+	private String getQueryResultFileName(String queryId, String blockKey) {
+		return this.resultsDir + "/" + String.format("%s-%s", blockKey, queryId) + ".json";
 	}
 
 	/**
 	 * Handles an internal Query request (from another StorageNode)
 	 */
 	@EventHandler
-	public void handleQuery(QueryEvent query, EventContext context)
-			throws IOException {
-		List<Path<Feature, String>> results = new ArrayList<Path<Feature,String>>();
-		try{
-			logger.info(query.getQuery().toString());
-			results = fs.query(query.getQuery());
-		} catch(Exception e){
-			logger.log(Level.SEVERE, "Something went wrong while querying the filesystem. No results obtained. Sending blank list to the client. Issue details follow:", e);
-		}
-		logger.info("Got " + results.size() + " results");
-		QueryResponse response = new QueryResponse(query.getQueryId(), results);
-		context.sendReply(response);
-	}
+	public void handleQuery(QueryEvent event, EventContext context) throws IOException {
+		long resultSize = 0;
+		Map<String, List<Path<Feature, String>>> results = new HashMap<String, List<Path<Feature, String>>>();
+		JSONObject resultsJSON = new JSONObject();
+		try {
+			logger.info(event.getQueryString());
+			String fsName = event.getFileSystemName();
+			GeospatialFileSystem fs = fsMap.get(fsName);
+			if (fs != null) {
+				// results = fs.query(event);
+				Metadata data = new Metadata();
+				if (event.isTemporal())
+					data.setTemporalProperties(event.getTemporalProperties());
+				if (event.isSpatial())
+					data.setSpatialProperties(new SpatialProperties(new SpatialRange(event.getPolygon())));
+				Map<String, List<String>> blockMap = fs.listBlocks(data);
+				System.out.println(blockMap);
+				for(String blockKey: blockMap.keySet()){
+					List<String> blocks = blockMap.get(blockKey);
+					List<Path<Feature, String>> resultPaths = new ArrayList<Path<Feature, String>>();
+					if(event.isInteractive())
+						results.put(blockKey, resultPaths);
+					FileWriter resultFile = null;
+					if (!event.isInteractive()) {
+						resultFile = new FileWriter(getQueryResultFileName(event.getQueryId(), blockKey));
+						resultFile.append("[");
+					}
+					int blockCount = 0;
+					for (String block : blocks) {
+						blockCount++;
+						List<Path<Feature, String>> qResults = fs.query(block,
+								new GeoavailabilityQuery(event.getQuery(), event.getPolygon()));
+						resultSize += qResults.size();
+						if (event.isInteractive())
+							resultPaths.addAll(qResults);
+						else {
+							int resultCount = 0;
+							for (Path<Feature, String> path : qResults) {
+								resultCount++;
+								JSONObject jsonPath = new JSONObject();
+								for (Feature feature : path.getLabels()) {
+									jsonPath.put(feature.getName(), feature.getString());
+								}
+								resultFile.append(jsonPath.toString());
+								if (blockCount != blocks.size() || resultCount != qResults.size())
+									resultFile.append(",");
+							}
 
-	@EventHandler
-	public void handleQueryResponse(QueryResponse response, EventContext context)
-			throws IOException {
-		QueryTracker tracker = queryTrackers.get(response.getId());
-		if (tracker == null) {
-			logger.log(Level.WARNING, "Unknown query response received: {0}",
-					response.getId());
-			return;
-		}
-	}
-	
-	
-	/**
-	 * Handles a geo query request from a client. Query requests result in a number
-	 * of subqueries being performed across the Galileo network.
-	 */
-	@EventHandler
-	public void handleGeoQueryRequest(GeoQueryRequest request, EventContext context)
-			throws IOException {
-		
-		List<Coordinates> polygon = request.getPolygon();
-		logger.log(Level.INFO, "Geoquery request: {0}", polygon);
-		logger.log(Level.INFO, "Geohashes of this node: {0}", this.geoMap.keySet());
-		logger.log(Level.INFO, "Geohashes of this group: {0}", this.snGroup.getGeoHashes());
-
-		Set<GroupInfo> probableGroups = new HashSet<GroupInfo>();
-		List<GroupInfo> allGroups = this.network.getGroups();
-		for(Coordinates coords : polygon) {
-			String geoHash = GeoHash.encode(coords, 2);
-			logger.log(Level.INFO, "Geohash of the coordinates("+coords+") is " + geoHash);
-			for(GroupInfo group : allGroups){
-				if(group.hasGeoHash(geoHash)){
-					logger.log(Level.INFO, "Probable group: "+ group.getName() +", Geohashes: " + group.getGeoHashes());
-					probableGroups.add(group);
-				}
-			}
-		}
-		logger.log(Level.INFO, "Number of probable groups: " + probableGroups.size());
-		Set<NetworkDestination> destinations = new HashSet<NetworkDestination>();
-		for(GroupInfo group : probableGroups)
-			destinations.addAll(group.getAllNodes());
-		logger.log(Level.INFO, "Sending requests to: " + destinations);
-		ClientRequestHandler reqHandler = new ClientRequestHandler(
-				destinations, context, this);
-		GeoQueryEvent gqEvent = new GeoQueryEvent(polygon);
-		GeoQueryResponse response = new GeoQueryResponse(new HashSet<Metadata>());
-		reqHandler.handleRequest(gqEvent, response);
-		this.requestHandlers.add(reqHandler);
-	}
-
-	/**
-	 * Handles an internal Geo Query request (from another StorageNode)
-	 */
-	@EventHandler
-	public void handleGeoQueryEvent(GeoQueryEvent query, EventContext context)
-			throws IOException {
-		HashSet<Metadata> results = new HashSet<Metadata>();
-		GeoavailabilityQuery geoQuery = new GeoavailabilityQuery(query.getPolygon());
-		try{
-			logger.info("Geoquery Event - Polygon:" + query.getPolygon().toString());
-			String prevHash = null;
-			for(Coordinates coords : query.getPolygon()) {
-				String geoHash = GeoHash.encode(coords, 2);
-				if(!geoHash.equalsIgnoreCase(prevHash)){
-					logger.info("Geoquery Event - Coordinate:" + coords + ", GeoHash:" + geoHash);
-					prevHash = geoHash;
-					GeoavailabilityMap<Metadata> map = this.geoMap.get(geoHash);
-					if(null != map){
-						logger.info("Geoquery Event - Obtained the geoMap and issued the geoQuery");
-				        /*BufferedImage b = BitmapVisualization.drawGeoavailabilityGrid(map.getGrid(), Color.BLACK);
-				        logger.info("Geoquery Event - storing the GeoavailabilityMap image");
-				        BitmapVisualization.imageToFile(b, this.hostname + "-" + geoHash + "-GeoavailabilityMap.gif");
-				        Bitmap queryBitamp = QueryTransform.queryToGridBitmap(geoQuery, map.getGrid());
-				        BufferedImage polyImage = BitmapVisualization.drawBitmap(queryBitamp, map.getGrid().getWidth(), map.getGrid().getHeight(), Color.RED);
-				        logger.info("Geoquery Event - storing the Polygon image");
-				        BitmapVisualization.imageToFile(
-				                polyImage, this.hostname + "-" + geoHash + "-GeoavailabilityQuery.gif");*/
-						Map<Integer, List<Metadata>> rMap = map.query(geoQuery);
-						for(List<Metadata> mList : rMap.values()){
-							logger.info("Geoquery Event Results - Size of the Metadata List: "+mList.size());
-							results.addAll(mList);
+						}
+					}
+					if (resultFile != null) {
+						resultFile.append("]");
+						resultFile.flush();
+						resultFile.close();
+						long fileSize = new File(getQueryResultFileName(event.getQueryId(), blockKey)).length();
+						if(fileSize > 2){
+							//file size of 2 indicates empty list. Including only those files having results
+							JSONObject resultJSON = new JSONObject();
+							resultJSON.put("filePath", getQueryResultFileName(event.getQueryId(), blockKey));
+							resultJSON.put("fileSize", fileSize);
+							resultJSON.put("hostName", this.hostname);
+							resultsJSON.put(blockKey, new JSONArray().put(resultJSON));
 						}
 					}
 				}
+			} else {
+				logger.log(Level.SEVERE, "Requested file system(" + fsName
+						+ ") not found. Ignoring the query and returning empty results.");
 			}
-		} catch(Exception e){
-			logger.log(Level.SEVERE, "Something went wrong while querying the geoavailability map. Results may not be complete. Sending partial results to the client. Issue details follow:", e);
+		} catch (Exception e) {
+			logger.log(Level.SEVERE,
+					"Something went wrong while querying the filesystem. No results obtained. Sending blank list to the client. Issue details follow:",
+					e);
 		}
-		logger.info("Got " + results.size() + " results");
-		GeoQueryResponse response = new GeoQueryResponse(results);
-		context.sendReply(response);
+		logger.info("Got " + resultSize + " results");
+		if (event.isInteractive()) {
+			QueryResponse response = new QueryResponse(event.getQueryId(), results);
+			context.sendReply(response);
+		} else {
+			JSONObject responseJSON = new JSONObject();
+			responseJSON.put("filesystem", event.getFileSystemName());
+			responseJSON.put("queryId", event.getQueryId());
+			responseJSON.put("result", resultsJSON);
+			QueryResponse response = new QueryResponse(event.getQueryId(), responseJSON);
+			context.sendReply(response);
+		}
 	}
 
+	@EventHandler
+	public void handleQueryResponse(QueryResponse response, EventContext context) throws IOException {
+		QueryTracker tracker = queryTrackers.get(response.getId());
+		if (tracker == null) {
+			logger.log(Level.WARNING, "Unknown query response received: {0}", response.getId());
+			return;
+		}
+	}
+
+
 	/**
-	 * Triggered when the request is completed by the {@link ClientRequestHandler}
+	 * Triggered when the request is completed by the
+	 * {@link ClientRequestHandler}
 	 */
 	@Override
-	public void onRequestCompleted(Event reponse, EventContext context,
-			MessageListener requestHandler) {
+	public void onRequestCompleted(Event reponse, EventContext context, MessageListener requestHandler) {
 		try {
 			logger.info("Sending collective response to the client");
 			this.requestHandlers.remove(requestHandler);
 			context.sendReply(reponse);
 		} catch (IOException e) {
-			logger.log(Level.INFO,
-					"Failed to send response to the client. Details follow: "
-							+ e.getMessage());
+			logger.log(Level.INFO, "Failed to send response to the client. Details follow: " + e.getMessage());
+			StringWriter sw = new StringWriter();
+			e.printStackTrace(new PrintWriter(sw));
+			logger.log(Level.INFO, sw.toString());
 		}
 	}
 
@@ -502,7 +594,8 @@ public class StorageNode implements RequestListener {
 				pidFile.delete();
 			}
 
-			fs.shutdown();
+			for (GeospatialFileSystem fs : fsMap.values())
+				fs.shutdown();
 
 			System.out.println("Goodbye!");
 			System.exit(0);

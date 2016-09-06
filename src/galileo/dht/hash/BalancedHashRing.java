@@ -26,6 +26,7 @@ software, even if advised of the possibility of such damage.
 package galileo.dht.hash;
 
 import java.math.BigInteger;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -220,6 +221,11 @@ public class BalancedHashRing<T> implements HashRing<T> {
         }
 
         return node;
+    }
+    
+    @Override
+    public Set<BigInteger> getPositions() {
+    	return entryMap.keySet();
     }
 
     /**

@@ -92,4 +92,9 @@ public class SHA1Partitioner extends Partitioner<String> {
         BigInteger pos = hashRing.locate(fileName.getBytes());
         return nodePositions.get(pos);
     }
+
+	@Override
+	public List<NodeInfo> findDestinations(String data) throws HashException, PartitionException {
+		return network.getAllNodes();
+	}
 }

@@ -33,7 +33,7 @@
         <javac srcdir="${src}"
                 destdir="${build}"
                 classpathref="classpath"
-                includeantruntime="false">
+                includeantruntime="false" debug="true">
 
             <compilerarg value="-Xlint"/>
 
@@ -110,7 +110,7 @@
     <!-- cleans up everything from the releaseclean task, plus additional files
       that should not be cleaned up for a release -->
     <target name="clean" depends="releaseclean">
-        <delete dir="${docs}"/>
+        <delete dir="${build}"/>
         <delete file="${jar.name}"/>
     </target>
 

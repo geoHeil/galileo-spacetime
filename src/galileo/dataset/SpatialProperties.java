@@ -28,6 +28,7 @@ package galileo.dataset;
 import java.io.IOException;
 
 import galileo.serialization.ByteSerializable;
+import galileo.serialization.SerializationException;
 import galileo.serialization.SerializationInputStream;
 import galileo.serialization.SerializationOutputStream;
 
@@ -104,7 +105,7 @@ public class SpatialProperties implements ByteSerializable {
 
     @Deserialize
     public SpatialProperties(SerializationInputStream in)
-    throws IOException {
+    throws IOException, SerializationException {
         boolean hasRange = in.readBoolean();
         boolean hasCoordinates = in.readBoolean();
 

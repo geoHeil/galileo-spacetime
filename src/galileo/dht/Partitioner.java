@@ -25,6 +25,8 @@ software, even if advised of the possibility of such damage.
 
 package galileo.dht;
 
+import java.util.List;
+
 import galileo.dht.hash.HashException;
 
 /**
@@ -35,24 +37,36 @@ import galileo.dht.hash.HashException;
  */
 public abstract class Partitioner<T> {
 
-    protected StorageNode storageNode;
-    protected NetworkInfo network;
+	protected StorageNode storageNode;
+	protected NetworkInfo network;
 
-    public Partitioner(StorageNode storageNode, NetworkInfo network) {
-        this.storageNode = storageNode;
-        this.network = network;
-    }
+	public Partitioner(StorageNode storageNode, NetworkInfo network) {
+		this.storageNode = storageNode;
+		this.network = network;
+	}
 
-    /**
-     * Determines where a file belongs in the system based on its
-     * properties.  This function could implement a simple hash-based
-     * partitioning scheme, something more dynamic, utilize the feature graph,
-     * etc.
-     *
-     * Ultimately, this function will determine the DHT hierarchy.
-     *
-     * @param data data to find the location in the network for.
-     */
-    public abstract NodeInfo locateData(T data)
-    throws HashException, PartitionException;
+	/**
+	 * Determines where a file belongs in the system based on its properties.
+	 * This function could implement a simple hash-based partitioning scheme,
+	 * something more dynamic, utilize the feature graph, etc.
+	 *
+	 * Ultimately, this function will determine the DHT hierarchy.
+	 *
+	 * @param data
+	 *            data to find the location in the network for.
+	 */
+	public abstract NodeInfo locateData(T data) throws HashException, PartitionException;
+
+	/**
+	 * Determines the nodes that contains the information based on the
+	 * properties of the data,
+	 * 
+	 * @param data
+	 *            data to find the nodes responsible for it.
+	 * @return List of NodeInfo objects
+	 * @throws HashException
+	 * @throws PartitionException
+	 */
+	public abstract List<NodeInfo> findDestinations(T data) throws HashException, PartitionException;
+
 }

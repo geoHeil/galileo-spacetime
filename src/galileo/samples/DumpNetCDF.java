@@ -49,13 +49,14 @@ public class DumpNetCDF {
             /* Don't cache more than 1 GB: */
             DiskCache.cleanCache(1073741824, null);
 
-            String[] attribs = { "temperature_surface",
+            /*String[] attribs = { "temperature_surface",
                 "total_cloud_cover_entire_atmosphere",
                 "visibility_surface",
                 "pressure_surface",
                 "categorical_snow_yes1_no0_surface",
                 "categorical_rain_yes1_no0_surface",
-                "relative_humidity_zerodegc_isotherm" };
+                "relative_humidity_zerodegc_isotherm" };*/
+            String[] attribs = {"U-component_of_wind"};
             Metadata m = metaMap.get("9x");
             System.out.print("9x@"
                     + m.getTemporalProperties().getStart() + "\t");

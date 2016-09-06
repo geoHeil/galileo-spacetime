@@ -25,9 +25,14 @@ software, even if advised of the possibility of such damage.
 
 package galileo.graph;
 
+import java.io.IOException;
+import java.util.Collection;
+import java.util.List;
+
+import org.json.JSONArray;
+
 import galileo.dataset.feature.Feature;
 import galileo.dataset.feature.FeatureType;
-
 import galileo.query.PayloadFilter;
 import galileo.query.Query;
 import galileo.serialization.ByteSerializable;
@@ -35,10 +40,6 @@ import galileo.serialization.SerializationException;
 import galileo.serialization.SerializationInputStream;
 import galileo.serialization.SerializationOutputStream;
 import galileo.util.Pair;
-
-import java.io.IOException;
-import java.util.Collection;
-import java.util.List;
 
 public class MetadataGraph implements ByteSerializable {
 
@@ -78,8 +79,13 @@ public class MetadataGraph implements ByteSerializable {
         return graph.evaluateQuery(query);
     }
     
-    public List<String> getFeaturesList(){
-    	return graph.getFeaturesList();
+    
+    public JSONArray getFeaturesJSON(){
+    	return graph.getFeaturesJSON();
+    }
+    
+    public FeatureHierarchy getFeatureHierarchy(){
+    	return graph.getFeatureHierarchy();
     }
 
     public List<Path<Feature, String>> evaluateQuery(Query query,

@@ -26,6 +26,7 @@ software, even if advised of the possibility of such damage.
 package galileo.dht.hash;
 
 import java.math.BigInteger;
+import java.util.Set;
 
 /**
  * Provides a generic interface for representing a hash space.  Here we use the
@@ -53,5 +54,10 @@ public interface HashRing<T> {
      * @return identifier of the node responsible for the provided data.
      */
     public BigInteger locate(T data) throws HashException;
+    
+    /**
+     * @return All the occupied positions in the HashRing
+     */
+    public Set<BigInteger> getPositions();
 
 }

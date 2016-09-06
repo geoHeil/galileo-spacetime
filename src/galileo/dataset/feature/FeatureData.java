@@ -51,7 +51,7 @@ implements ByteSerializable, Comparable<FeatureData<?>> {
      * Constructs FeatureData from a primitive or basic Java type.
      */
     public FeatureData(T data) {
-        this.data = data;
+    	this.data = data;
         this.type = FeatureType.fromPrimitiveType(data);
     }
 

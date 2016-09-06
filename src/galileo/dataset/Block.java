@@ -40,17 +40,24 @@ import galileo.serialization.SerializationOutputStream;
  */
 public class Block implements ByteSerializable {
 
+	private String fileSystem;
     private Metadata metadata;
     private byte[] data;
 
-    public Block(byte[] data) {
+    public Block(String fileSystem, byte[] data) {
+    	this.fileSystem = fileSystem;
         this.metadata = new Metadata();
         this.data = data;
     }
 
-    public Block(Metadata metadata, byte[] data) {
+    public Block(String fileSystem, Metadata metadata, byte[] data) {
+    	this.fileSystem = fileSystem;
         this.metadata = metadata;
         this.data = data;
+    }
+    
+    public String getFileSystem(){
+    	return this.fileSystem;
     }
 
     public Metadata getMetadata() {
@@ -64,13 +71,15 @@ public class Block implements ByteSerializable {
     @Deserialize
     public Block(SerializationInputStream in)
     throws IOException, SerializationException {
+    	this.fileSystem = in.readString();
         this.metadata = new Metadata(in);
-        data = in.readField();
+        this.data = in.readField();
     }
 
     @Override
     public void serialize(SerializationOutputStream out)
     throws IOException {
+    	out.writeString(fileSystem);
         out.writeSerializable(metadata);
         out.writeField(data);
     }
