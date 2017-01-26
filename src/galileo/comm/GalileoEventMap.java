@@ -39,11 +39,11 @@ public class GalileoEventMap extends EventMap {
         addMapping(202, QueryPreamble.class);
         addMapping(203, QueryResponse.class);
         
-        addMapping(301, MetaRequest.class);
-        addMapping(302, MetaResponse.class);
-        addMapping(303, MetaEvent.class);
+        addMapping(301, MetadataRequest.class);
+        addMapping(302, MetadataResponse.class);
+        addMapping(303, MetadataEvent.class);
         
-        addMapping(501, FileSystemRequest.class);
-        addMapping(502, FileSystemEvent.class);
+        addMapping(501, FilesystemRequest.class);
+        addMapping(502, FilesystemEvent.class);
     }
 }

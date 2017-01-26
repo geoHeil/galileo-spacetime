@@ -30,9 +30,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import galileo.comm.TemporalType;
+import galileo.config.SystemConfig;
 import galileo.dataset.Block;
 import galileo.dataset.Metadata;
 import galileo.dataset.feature.Feature;
+import galileo.dht.NetworkConfig;
+import galileo.dht.NetworkInfo;
+import galileo.dht.StorageNode;
 import galileo.fs.GeospatialFileSystem;
 import galileo.graph.MetadataGraph;
 import galileo.query.Expression;
@@ -56,7 +61,9 @@ public class QueryTest {
             }
         }
 
-        GeospatialFileSystem gfs = new GeospatialFileSystem("/var/tmp/galtest", "test");
+        NetworkInfo network = NetworkConfig.readNetworkDescription(SystemConfig.getNetworkConfDir());
+		GeospatialFileSystem gfs = new GeospatialFileSystem(new StorageNode(), "/tmp/galileo", "samples", 4, 0,
+				TemporalType.DAY_OF_MONTH.getType(), network, null, null, false);
 
         /* Insert the blocks we've loaded, if any */
         if (blocks.size() > 0) {

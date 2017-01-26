@@ -31,6 +31,7 @@ import galileo.dataset.Metadata;
 import galileo.dataset.SpatialProperties;
 import galileo.dataset.TemporalProperties;
 import galileo.dataset.feature.Feature;
+import galileo.dht.hash.TemporalHash;
 import galileo.serialization.Serializer;
 import galileo.util.FileNames;
 import galileo.util.GeoHash;
@@ -250,6 +251,7 @@ public class ConvertNetCDF {
 
         /* Generate the actual date for this reading */
         Calendar calendar = Calendar.getInstance();
+        calendar.setTimeZone(TemporalHash.TIMEZONE);
         calendar.setTime(baseDate);
         calendar.set(Calendar.HOUR, calendar.get(Calendar.HOUR) + offset);
         System.out.println("Time of collection: " + calendar.getTime());

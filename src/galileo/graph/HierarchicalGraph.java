@@ -329,7 +329,6 @@ public class HierarchicalGraph<T> {
         path.get(path.size() - 1).addValues(path.getPayload());
 
         root.addPath(path.iterator());
-        //logger.info(root.toString());
     }
 
     /**

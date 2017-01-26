@@ -1,10 +1,10 @@
 package galileo.comm;
 
-public enum FileSystemAction {
-	CREATE("create"), DELETE("delete");
+public enum FilesystemAction {
+	CREATE("create"), DELETE("delete"), PERSIST("persist");
 	
 	private String action;
-	private FileSystemAction(String action){
+	private FilesystemAction(String action){
 		this.action = action;
 	}
 	
@@ -12,8 +12,8 @@ public enum FileSystemAction {
 		return this.action;
 	}
 	
-	public static FileSystemAction fromAction(String action){
-		for(FileSystemAction fsa: FileSystemAction.values())
+	public static FilesystemAction fromAction(String action){
+		for(FilesystemAction fsa: FilesystemAction.values())
 			if(fsa.getAction().equalsIgnoreCase(action))
 				return fsa;
 		throw new IllegalArgumentException("No such action is supported");

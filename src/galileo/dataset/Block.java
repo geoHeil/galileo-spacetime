@@ -33,54 +33,52 @@ import galileo.serialization.SerializationInputStream;
 import galileo.serialization.SerializationOutputStream;
 
 /**
- * The basic unit of storage in Galileo.  A block could be a file, collection of
+ * The basic unit of storage in Galileo. A block could be a file, collection of
  * metadata, etc.
  *
  * @author malensek
  */
 public class Block implements ByteSerializable {
 
-	private String fileSystem;
-    private Metadata metadata;
-    private byte[] data;
+	private String filesystem;
+	private Metadata metadata;
+	private byte[] data;
 
-    public Block(String fileSystem, byte[] data) {
-    	this.fileSystem = fileSystem;
-        this.metadata = new Metadata();
-        this.data = data;
-    }
+	public Block(String filesystem, byte[] data) {
+		this.filesystem = filesystem;
+		this.metadata = new Metadata();
+		this.data = data;
+	}
 
-    public Block(String fileSystem, Metadata metadata, byte[] data) {
-    	this.fileSystem = fileSystem;
-        this.metadata = metadata;
-        this.data = data;
-    }
-    
-    public String getFileSystem(){
-    	return this.fileSystem;
-    }
+	public Block(String filesystem, Metadata metadata, byte[] data) {
+		this.filesystem = filesystem;
+		this.metadata = metadata;
+		this.data = data;
+	}
 
-    public Metadata getMetadata() {
-        return metadata;
-    }
+	public String getFilesystem() {
+		return this.filesystem;
+	}
 
-    public byte[] getData() {
-        return data;
-    }
+	public Metadata getMetadata() {
+		return metadata;
+	}
 
-    @Deserialize
-    public Block(SerializationInputStream in)
-    throws IOException, SerializationException {
-    	this.fileSystem = in.readString();
-        this.metadata = new Metadata(in);
-        this.data = in.readField();
-    }
+	public byte[] getData() {
+		return data;
+	}
 
-    @Override
-    public void serialize(SerializationOutputStream out)
-    throws IOException {
-    	out.writeString(fileSystem);
-        out.writeSerializable(metadata);
-        out.writeField(data);
-    }
+	@Deserialize
+	public Block(SerializationInputStream in) throws IOException, SerializationException {
+		this.filesystem = in.readString();
+		this.metadata = new Metadata(in);
+		this.data = in.readField();
+	}
+
+	@Override
+	public void serialize(SerializationOutputStream out) throws IOException {
+		out.writeString(filesystem);
+		out.writeSerializable(metadata);
+		out.writeField(data);
+	}
 }

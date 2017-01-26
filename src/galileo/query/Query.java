@@ -55,6 +55,10 @@ public class Query implements ByteSerializable {
     public void addOperation(Operation op) {
         operations.add(op);
     }
+    
+    public void addAllOperations(List<Operation> ops){
+    	operations.addAll(ops);
+    }
 
     public List<Operation> getOperations() {
         return operations;

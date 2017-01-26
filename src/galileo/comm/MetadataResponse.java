@@ -9,15 +9,15 @@ import galileo.serialization.SerializationException;
 import galileo.serialization.SerializationInputStream;
 import galileo.serialization.SerializationOutputStream;
 
-public class MetaResponse implements Event{
+public class MetadataResponse implements Event{
 	
 	private JSONObject response;
 	
-	public MetaResponse(JSONObject response){
+	public MetadataResponse(JSONObject response){
 		this.response = response;
 	}
 	
-	public MetaResponse(String jsonResponse){
+	public MetadataResponse(String jsonResponse){
 		this.response = new JSONObject(jsonResponse);
 	}
 	
@@ -30,7 +30,7 @@ public class MetaResponse implements Event{
 	}
 	
 	@Deserialize
-    public MetaResponse(SerializationInputStream in)
+    public MetadataResponse(SerializationInputStream in)
     throws IOException, SerializationException {
         String jsonResponse = in.readString();
         this.response = new JSONObject(jsonResponse);

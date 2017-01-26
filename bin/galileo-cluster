@@ -59,6 +59,6 @@ for group in ${groups}; do
     # character (used to specify communication ports)
     sed 's/[\t ]//g; s/^#.*//g; /^$/d; s/\(.*\):.*/\1/g' "${group}" | \
         "${GALILEO_HOME}"/bin/dssh -pq ${colorize} -o "${ssh_opts}" \
-        '${GALILEO_HOME}/bin/galileo-node '"${node_opts} ${@}" &
+        '. ~/.bash_profile > /dev/null 2>&1;. ~/.profile > /dev/null 2>&1; ${GALILEO_HOME}/bin/galileo-node '"${node_opts} ${@}" &
 done
 wait

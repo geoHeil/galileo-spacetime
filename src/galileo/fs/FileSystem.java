@@ -51,13 +51,13 @@ public abstract class FileSystem implements PhysicalGraph {
     protected File storageDirectory;
     private boolean readOnly;
 
-    public FileSystem(String storageRoot, String name)
+    public FileSystem(String storageRoot, String name, boolean ignoreIfPresent)
     throws FileSystemException, IOException {
     	this.name = name;
-        initialize(storageRoot, name);
+        initialize(storageRoot, name, ignoreIfPresent);
     }
 
-    protected void initialize(String storageRoot, String name)
+    protected void initialize(String storageRoot, String name, boolean ignoreIfPresent)
     throws FileSystemException, IOException {
         logger.info("Initializing Galileo File System.");
         String directoryName = storageRoot + "/" + name;
@@ -74,7 +74,8 @@ public abstract class FileSystem implements PhysicalGraph {
                     "directory.");
             }
         } else {
-        	throw new FileSystemException("A file system already exists for the given name.");
+        	if(!ignoreIfPresent)
+        		throw new FileSystemException("A file system already exists for the given name.");
         }
 
         logger.info("Free space: " + getFreeSpace());

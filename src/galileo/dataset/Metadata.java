@@ -62,12 +62,6 @@ public class Metadata implements ByteSerializable {
 	private TemporalProperties temporalProperties = null;
 
 	/**
-	 * Spatial hint associated with this metadata. Helpful when creating spatial
-	 * properties from the block that this metadata is part of.
-	 */
-	private SpatialHint spatialHint;
-
-	/**
 	 * Maintains metadata information that is only valid at system run time.
 	 */
 	private RuntimeMetadata runtimeMetadata = new RuntimeMetadata();
@@ -157,20 +151,8 @@ public class Metadata implements ByteSerializable {
 		return this.spatialProperties;
 	}
 
-	public SpatialHint getSpatialHint() {
-		return this.spatialHint;
-	}
-
-	public void setSpatialHint(SpatialHint spHint) {
-		this.spatialHint = spHint;
-	}
-
 	public boolean hasSpatialProperties() {
 		return this.spatialProperties != null;
-	}
-
-	public boolean hasSpatialHint() {
-		return this.spatialHint != null;
 	}
 
 	public void setTemporalProperties(TemporalProperties temporalProperties) {
@@ -222,11 +204,6 @@ public class Metadata implements ByteSerializable {
 			spatialProperties = new SpatialProperties(in);
 		}
 
-		boolean sHint = in.readBoolean();
-		if (sHint) {
-			spatialHint = new SpatialHint(in);
-		}
-
 		attributes = new FeatureSet(in);
 		features = new FeatureArraySet(in);
 		runtimeMetadata = new RuntimeMetadata(in);
@@ -244,11 +221,6 @@ public class Metadata implements ByteSerializable {
 		out.writeBoolean(hasSpatialProperties());
 		if (hasSpatialProperties()) {
 			out.writeSerializable(spatialProperties);
-		}
-
-		out.writeBoolean(hasSpatialHint());
-		if (hasSpatialHint()) {
-			out.writeSerializable(spatialHint);
 		}
 
 		out.writeSerializable(attributes);

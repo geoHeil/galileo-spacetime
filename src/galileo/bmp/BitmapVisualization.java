@@ -146,6 +146,6 @@ public class BitmapVisualization {
     public static void imageToFile(BufferedImage image, String file)
     throws IOException {
         File f = new File(file);
-        ImageIO.write(image, "gif", f);
+        ImageIO.write(image, "png", f);
     }
 }

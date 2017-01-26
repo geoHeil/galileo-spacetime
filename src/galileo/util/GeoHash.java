@@ -51,7 +51,7 @@ public class GeoHash {
 	public final static byte BITS_PER_CHAR = 5;
 	public final static int LATITUDE_RANGE = 90;
 	public final static int LONGITUDE_RANGE = 180;
-	public final static int MAX_PRECISION = 24;
+	public final static int MAX_PRECISION = 30; //6 character precision = 30 (~ 1.2km x 0.61km)
 
 	/**
 	 * This character array maps integer values (array indices) to their GeoHash
@@ -284,20 +284,16 @@ public class GeoHash {
 	 */
 	public static Point<Integer> coordinatesToXY(Coordinates coords) {
 		int width = 1 << MAX_PRECISION;
-		float xdp = 360f / width;
-		float ydp = 180f / width;
 		float xDiff = coords.getLongitude() + 180;
 		float yDiff = 90 - coords.getLatitude();
-		int x = (int) (xDiff / xdp);
-		int y = (int) (yDiff / ydp);
+		int x = (int) (xDiff * width / 360);
+		int y = (int) (yDiff * width / 180);
 		return new Point<>(x, y);
 	}
 
 	public static Coordinates xyToCoordinates(int x, int y) {
 		int width = 1 << MAX_PRECISION;
-		float xdp = 360f / width;
-		float ydp = 180f / width;
-		return new Coordinates(90 - y * ydp, x * xdp - 180f);
+		return new Coordinates(90 - y * 180f / width, x * 360f / width - 180f);
 	}
 
 	public static String[] getIntersectingGeohashes(List<Coordinates> polygon, int precision) {
@@ -307,7 +303,8 @@ public class GeoHash {
 			Point<Integer> point = coordinatesToXY(coords);
 			geometry.addPoint(point.X(), point.Y());
 		}
-		Coordinates spatialCenter = new SpatialRange(polygon).getCenterPoint();
+		//center may not lie inside polygon so start with any vertex of the polygon
+		Coordinates spatialCenter = polygon.get(0);
 		Rectangle2D box = geometry.getBounds2D();
 		String geohash = encode(spatialCenter, precision);
 		Queue<String> hashQue = new LinkedList<String>();

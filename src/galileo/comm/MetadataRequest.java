@@ -12,23 +12,24 @@ import org.json.JSONObject;
 /**
  * A client interface to request meta information from galileo such as the file system names and features in a filesystem.
  * <br/>Request must be a JSON string in the following format:<br/>
- * { "kind" : "galileo#filesystem" | "galileo#features",<br/>
- * &nbsp;&nbsp;"filesystem" : ["Array of Strings indicating the names of the filesystem" - required if the kind is galileo#features"], <br/>
+ * { "kind" : "galileo#filesystem" | "galileo#features" | "galileo#overview",<br/>
+ * &nbsp;&nbsp;"filesystem" : ["Array of Strings indicating the names of the filesystem" - required if the kind is galileo#features or 
+ * &nbsp;&nbsp;&nbsp;&nbsp;galileo#overview] <br/>
  * }<br/>
- * The response would be an instance of {@link MetaResponse}
- * @author jkachika
+ * The response would be an instance of {@link MetadataResponse}
+ * @author kachikaran
  */
-public class MetaRequest implements Event{
+public class MetadataRequest implements Event{
 	
 	private JSONObject request;
 	
-	public MetaRequest(String reqJSON){
+	public MetadataRequest(String reqJSON){
 		if(reqJSON == null || reqJSON.trim().length() == 0)
 			throw new IllegalArgumentException("Request must be a valid JSON string.");
 		this.request = new JSONObject(reqJSON);
 	}
 	
-	public MetaRequest(JSONObject request) {
+	public MetadataRequest(JSONObject request) {
 		if(request == null) 
 			throw new IllegalArgumentException("Request must be a valid JSON object.");
 		this.request = request;
@@ -43,7 +44,7 @@ public class MetaRequest implements Event{
 	}
 	
 	@Deserialize
-    public MetaRequest(SerializationInputStream in)
+    public MetadataRequest(SerializationInputStream in)
     throws IOException, SerializationException {
         String reqJSON = in.readString();
         this.request = new JSONObject(reqJSON);

@@ -30,7 +30,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
-
+import java.util.Arrays;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -70,8 +70,9 @@ public class NetworkConfig {
             throw new FileNotFoundException("Could not find network " +
                     "configuration directory");
         }
-
-        for (File file : dir.listFiles()) {
+        File[] groupFiles = dir.listFiles();
+        Arrays.sort(groupFiles);
+        for (File file : groupFiles) {
 
             Pair<String, String> pair = FileNames.splitExtension(file);
             String ext = pair.b;

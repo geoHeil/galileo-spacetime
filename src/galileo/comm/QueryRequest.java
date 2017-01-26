@@ -31,7 +31,6 @@ import java.util.Collections;
 import java.util.List;
 
 import galileo.dataset.Coordinates;
-import galileo.dataset.TemporalProperties;
 import galileo.event.Event;
 import galileo.query.Expression;
 import galileo.query.Operation;
@@ -51,13 +50,16 @@ public class QueryRequest implements Event {
 
 	private String fsName;
 	private boolean interactive;
-	private Query query;
+	private Query featureQuery;
+	private Query metadataQuery;
 	private List<Coordinates> polygon;
-	private TemporalProperties time;
+	private String time;
+	private boolean dryRun;
 
 	private void validate(String fsName) {
 		if (fsName == null || fsName.trim().length() == 0 || !fsName.matches("[a-z0-9-]{5,50}"))
 			throw new IllegalArgumentException("invalid filesystem name");
+		this.fsName = fsName;
 	}
 
 	private void validate(Query query) {
@@ -72,104 +74,68 @@ public class QueryRequest implements Event {
 			throw new IllegalArgumentException("illegal expression for an operation of the query");
 	}
 
-	private void setQuery(Query query) {
+	public void setFeatureQuery(Query query) {
 		validate(query);
-		this.query = query;
+		this.featureQuery = query;
 	}
 
-	private void setPolygon(List<Coordinates> polygon) {
+	public void setMetdataQuery(Query query) {
+		validate(query);
+		this.metadataQuery = query;
+	}
+
+	public void setPolygon(List<Coordinates> polygon) {
+		if (polygon == null)
+			throw new IllegalArgumentException("Spatial coordinates cannot be null");
 		this.polygon = polygon;
 	}
 
-	private void setTime(TemporalProperties time) {
-		this.time = time;
+	public void makeInteractive() {
+		this.interactive = true;
 	}
 
-	private QueryRequest(String fsName) {
+	public void setTime(String time) {
+		if (time != null) {
+			if (time.length() != 13)
+				throw new IllegalArgumentException(
+						"time must be of the form yyyy-mm-dd-hh with missing values replaced as x");
+			this.time = time;
+		}
+	}
+
+	public QueryRequest(String fsName, Query featureQuery, Query metadataQuery) {
 		validate(fsName);
-		this.fsName = fsName;
-	}
-
-	public QueryRequest(String fsName, Query query) {
-		this(fsName);
-		setQuery(query);
-	}
-
-	public QueryRequest(String fsName, Query query, boolean interactive) {
-		this(fsName, query);
-		this.interactive = interactive;
+		if (featureQuery == null && metadataQuery == null)
+			throw new IllegalArgumentException("Atleast one of the queries must be present");
+		if (featureQuery != null)
+			setFeatureQuery(featureQuery);
+		if (metadataQuery != null)
+			setMetdataQuery(metadataQuery);
 	}
 
 	public QueryRequest(String fsName, List<Coordinates> polygon) {
-		this(fsName);
+		validate(fsName);
 		setPolygon(polygon);
 	}
-
-	public QueryRequest(String fsName, List<Coordinates> polygon, boolean interactive) {
-		this(fsName, polygon);
-		this.interactive = interactive;
-	}
-
-	public QueryRequest(String fsName, List<Coordinates> polygon, Query query) {
-		this(fsName, polygon);
-		setQuery(query);
-	}
-
-	public QueryRequest(String fsName, List<Coordinates> polygon, Query query, boolean interactive) {
-		this(fsName, polygon, query);
-		this.interactive = interactive;
-	}
-
-	public QueryRequest(String fsName, TemporalProperties time) {
-		this(fsName);
+	
+	public QueryRequest(String fsName, String time) {
+		validate(fsName);
 		setTime(time);
 	}
 
-	public QueryRequest(String fsName, TemporalProperties time, boolean interactive) {
-		this(fsName, time);
-		this.interactive = interactive;
-	}
-
-	public QueryRequest(String fsName, TemporalProperties time, Query query) {
-		this(fsName, time);
-		setQuery(query);
-	}
-
-	public QueryRequest(String fsName, TemporalProperties time, Query query, boolean interactive) {
-		this(fsName, time, query);
-		this.interactive = interactive;
-	}
-
-	public QueryRequest(String fsName, TemporalProperties time, List<Coordinates> polygon) {
-		this(fsName, time);
-		setPolygon(polygon);
-	}
-
-	public QueryRequest(String fsName, TemporalProperties time, List<Coordinates> polygon, boolean interactive) {
-		this(fsName, time, polygon);
-		this.interactive = interactive;
-	}
-
-	public QueryRequest(String fsName, TemporalProperties time, List<Coordinates> polygon, Query query) {
-		this(fsName, time, polygon);
-		setQuery(query);
-	}
-
-	public QueryRequest(String fsName, TemporalProperties time, List<Coordinates> polygon, Query query,
-			boolean interactive) {
-		this(fsName, time, polygon, query);
-		this.interactive = interactive;
-	}
-
-	public String getFileSystemName() {
+	public String getFilesystemName() {
 		return this.fsName;
 	}
 
-	public Query getQuery() {
-		return query;
+	public Query getFeatureQuery() {
+		return this.featureQuery;
+	}
+	
+	public Query getMetadataQuery() {
+		return this.featureQuery;
 	}
 
-	public TemporalProperties getTemporalProperties() {
+	public String getTime() {
 		return this.time;
 	}
 
@@ -191,14 +157,36 @@ public class QueryRequest implements Event {
 		return time != null;
 	}
 
-	public boolean hasQuery() {
-		return query != null;
+	public boolean hasFeatureQuery() {
+		return this.featureQuery != null;
 	}
 
-	public String getQueryString() {
-		if (query != null)
-			return query.toString();
+	public String getFeatureQueryString() {
+		if (this.featureQuery != null)
+			return featureQuery.toString();
 		return "";
+	}
+	
+	public boolean hasMetadataQuery() {
+		return this.metadataQuery != null;
+	}
+
+	public String getMetadataQueryString() {
+		if (this.metadataQuery != null)
+			return metadataQuery.toString();
+		return "";
+	}
+
+	public boolean isDryRun() {
+		return this.dryRun;
+	}
+
+	public void enableDryRun() {
+		this.dryRun = true;
+	}
+
+	public void disableDryRun() {
+		this.dryRun = false;
 	}
 
 	@Deserialize
@@ -206,17 +194,21 @@ public class QueryRequest implements Event {
 		fsName = in.readString();
 		boolean isTemporal = in.readBoolean();
 		if (isTemporal)
-			time = new TemporalProperties(in);
+			time = in.readString();
 		boolean isSpatial = in.readBoolean();
 		if (isSpatial) {
 			List<Coordinates> poly = new ArrayList<Coordinates>();
 			in.readSerializableCollection(Coordinates.class, poly);
 			polygon = poly;
 		}
-		boolean hasQuery = in.readBoolean();
-		if (hasQuery)
-			query = new Query(in);
+		boolean hasFeatureQuery = in.readBoolean();
+		if (hasFeatureQuery)
+			this.featureQuery = new Query(in);
+		boolean hasMetadataQuery = in.readBoolean();
+		if (hasMetadataQuery)
+			this.metadataQuery = new Query(in);
 		interactive = in.readBoolean();
+		dryRun = in.readBoolean();
 	}
 
 	@Override
@@ -224,13 +216,17 @@ public class QueryRequest implements Event {
 		out.writeString(fsName);
 		out.writeBoolean(isTemporal());
 		if (isTemporal())
-			out.writeSerializable(time);
+			out.writeString(time);
 		out.writeBoolean(isSpatial());
 		if (isSpatial())
 			out.writeSerializableCollection(polygon);
-		out.writeBoolean(hasQuery());
-		if (hasQuery())
-			out.writeSerializable(query);
+		out.writeBoolean(hasFeatureQuery());
+		if (hasFeatureQuery())
+			out.writeSerializable(this.featureQuery);
+		out.writeBoolean(hasMetadataQuery());
+		if (hasMetadataQuery())
+			out.writeSerializable(this.metadataQuery);
 		out.writeBoolean(interactive);
+		out.writeBoolean(dryRun);
 	}
 }

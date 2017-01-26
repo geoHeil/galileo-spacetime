@@ -84,7 +84,7 @@ public class StatusLine {
      *
      * @param status the new status line to write to disk immediately.
      */
-    public void set(String status) {
+    public synchronized void set(String status) {
         if (!active) {
             return;
         }

@@ -22,7 +22,7 @@
         <fileset dir="." includes="lib/*.jar"/>
     </path>
 
-    <target name="compile" description="Compile source files">
+    <target name="compile" description="Compile source files" depends="clean">
         <mkdir dir="${build}"/>
 
         <depend srcdir="${src}"

@@ -64,7 +64,7 @@ public class SHA1Partitioner extends Partitioner<String> {
 
         /* Fail here; if the user is expecting multiple groups or subgroups,
          * they are using the wrong partitioner. */
-        if (groups.size() > 1 || groups.get(0).getGroups().size() > 0) {
+        if (groups.size() > 1) {
             throw new PartitionException("More than one group exists in the "
                     + "current network configuration.  Only **ONE** group can "
                     + "be used with the SHA1Partitioner.");

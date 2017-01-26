@@ -5,11 +5,14 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.List;
 import java.util.Random;
+import java.util.TimeZone;
 
+import galileo.comm.TemporalType;
 import galileo.dataset.Metadata;
 import galileo.dataset.TemporalProperties;
 
 public class TemporalHash implements HashFunction<Metadata> {
+	public static final TimeZone TIMEZONE = TimeZone.getTimeZone("GMT");
 	private Random random = new Random();
 	private int temporalType;
 
@@ -19,8 +22,8 @@ public class TemporalHash implements HashFunction<Metadata> {
 	 * @throws HashException
 	 * If temporalType does not match the one of the supported constants.
 	 */
-	public TemporalHash(int temporalType) throws HashException {
-		this.temporalType = temporalType;
+	public TemporalHash(TemporalType tType) throws HashException {
+		this.temporalType = tType.getType();
 		List<Integer> temporalTypes = Arrays.asList(new Integer[] { Calendar.DAY_OF_MONTH, Calendar.DAY_OF_WEEK,
 				Calendar.DAY_OF_YEAR, Calendar.HOUR, Calendar.HOUR_OF_DAY, Calendar.WEEK_OF_MONTH,
 				Calendar.WEEK_OF_YEAR, Calendar.MONTH, Calendar.YEAR });
@@ -33,6 +36,7 @@ public class TemporalHash implements HashFunction<Metadata> {
 	public BigInteger hash(Metadata data) throws HashException {
 		TemporalProperties temporalProps = data.getTemporalProperties();
 		Calendar c = Calendar.getInstance();
+		c.setTimeZone(TIMEZONE);
 		c.setTimeInMillis(temporalProps.getStart());
 		switch (this.temporalType) {
 		case Calendar.DAY_OF_MONTH:

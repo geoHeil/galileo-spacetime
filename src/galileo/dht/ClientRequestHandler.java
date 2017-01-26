@@ -10,7 +10,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -18,13 +17,11 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import galileo.comm.GalileoEventMap;
-import galileo.comm.MetaResponse;
+import galileo.comm.MetadataResponse;
 import galileo.comm.QueryResponse;
-import galileo.dataset.feature.Feature;
 import galileo.event.BasicEventWrapper;
 import galileo.event.Event;
 import galileo.event.EventContext;
-import galileo.graph.Path;
 import galileo.net.ClientMessageRouter;
 import galileo.net.GalileoMessage;
 import galileo.net.MessageListener;
@@ -36,12 +33,11 @@ import galileo.serialization.SerializationException;
  * This class will collect the responses from all the nodes of galileo and then
  * transfers the result to the listener. Used by the {@link StorageNode} class.
  * 
- * @author jkachika
+ * @author kachikaran
  */
 public class ClientRequestHandler implements MessageListener {
 
 	private static final Logger logger = Logger.getLogger("galileo");
-	private static final int DELAY = 600000; // 600 seconds = 10 minutes
 	private GalileoEventMap eventMap;
 	private BasicEventWrapper eventWrapper;
 	private ClientMessageRouter router;
@@ -50,9 +46,7 @@ public class ClientRequestHandler implements MessageListener {
 	private EventContext clientContext;
 	private List<GalileoMessage> responses;
 	private RequestListener requestListener;
-	private AtomicLong timeout;
 	private Event response;
-	private Thread timerThread;
 	private long elapsedTime;
 
 	public ClientRequestHandler(Collection<NetworkDestination> nodes, EventContext clientContext,
@@ -67,25 +61,6 @@ public class ClientRequestHandler implements MessageListener {
 		this.eventMap = new GalileoEventMap();
 		this.eventWrapper = new BasicEventWrapper(this.eventMap);
 		this.expectedResponses = new AtomicInteger(this.nodes.size());
-		this.timeout = new AtomicLong();
-		this.timerThread = new Thread("Client Request Handler - Timer Thread") {
-			public void run() {
-				try {
-					elapsedTime = System.currentTimeMillis();
-					while (System.currentTimeMillis() < timeout.get()) {
-						Thread.sleep(500);
-						if (isInterrupted())
-							throw new InterruptedException("Deliberate interruption");
-					}
-				} catch (InterruptedException e) {
-					logger.log(Level.INFO, "Timeout thread interrupted.");
-				} finally {
-					logger.log(Level.INFO, "Timeout: Closing the request and sending back the response.");
-					elapsedTime = System.currentTimeMillis() - elapsedTime;
-					ClientRequestHandler.this.closeRequest();
-				}
-			};
-		};
 	}
 
 	public void closeRequest() {
@@ -125,7 +100,7 @@ public class ClientRequestHandler implements MessageListener {
 		}
 		Map<String, Set<LocalFeature>> resultMap = new HashMap<String, Set<LocalFeature>>();
 		int responseCount = 0;
-		
+
 		for (GalileoMessage gresponse : this.responses) {
 			responseCount++;
 			Event event;
@@ -136,15 +111,9 @@ public class ClientRequestHandler implements MessageListener {
 					actualResponse.setElapsedTime(elapsedTime);
 					QueryResponse eventResponse = (QueryResponse) event;
 					if (actualResponse.isInteractive() && eventResponse.isInteractive()) {
-						Map<String, List<Path<Feature, String>>> actualResults = actualResponse.getResults();
-						Map<String, List<Path<Feature, String>>> eventResults = eventResponse.getResults();
-						for (String key : eventResults.keySet()) {
-							List<Path<Feature, String>> actualPaths = actualResults.get(key);
-							if (actualPaths != null)
-								actualPaths.addAll(eventResults.get(key));
-							else
-								actualResults.put(key, eventResults.get(key));
-						}
+						List<List<String>> actualResults = actualResponse.getResults();
+						List<List<String>> eventResults = eventResponse.getResults();
+						actualResults.addAll(eventResults);
 					} else {
 						if (!actualResponse.isInteractive() && !eventResponse.isInteractive()) {
 							JSONObject responseJSON = actualResponse.getJSONResults();
@@ -155,67 +124,186 @@ public class ClientRequestHandler implements MessageListener {
 							} else {
 								if (responseJSON.has("queryId") && eventJSON.has("queryId") && responseJSON
 										.getString("queryId").equalsIgnoreCase(eventJSON.getString("queryId"))) {
-									JSONObject actualResults = responseJSON.getJSONObject("result");
-									JSONObject eventResults = eventJSON.getJSONObject("result");
-									if (null != JSONObject.getNames(eventResults)) {
-										for (String name : JSONObject.getNames(eventResults)) {
-											if (actualResults.has(name)) {
-												JSONArray ar = actualResults.getJSONArray(name);
-												JSONArray er = eventResults.getJSONArray(name);
-												for (int i = 0; i < er.length(); i++) {
-													ar.put(er.get(i));
+									if (actualResponse.isDryRun()) {
+										JSONObject actualResults = responseJSON.getJSONObject("result");
+										JSONObject eventResults = eventJSON.getJSONObject("result");
+										if (null != JSONObject.getNames(eventResults)) {
+											for (String name : JSONObject.getNames(eventResults)) {
+												if (actualResults.has(name)) {
+													JSONArray ar = actualResults.getJSONArray(name);
+													JSONArray er = eventResults.getJSONArray(name);
+													for (int i = 0; i < er.length(); i++) {
+														ar.put(er.get(i));
+													}
+												} else {
+													actualResults.put(name, eventResults.getJSONArray(name));
 												}
-											} else {
-												actualResults.put(name, eventResults.getJSONArray(name));
 											}
+										}
+									} else {
+										JSONArray actualResults = responseJSON.getJSONArray("result");
+										JSONArray eventResults = eventJSON.getJSONArray("result");
+										for (int i = 0; i < eventResults.length(); i++)
+											actualResults.put(eventResults.getJSONObject(i));
+									}
+									if (responseJSON.has("hostResultSize")) {
+										JSONObject aHostResultSize = responseJSON.getJSONObject("hostResultSize");
+										JSONObject eHostResultSize = eventJSON.getJSONObject("hostResultSize");
+
+										JSONObject aHostProcessingTime = responseJSON
+												.getJSONObject("hostProcessingTime");
+										JSONObject eHostProcessingTime = eventJSON.getJSONObject("hostProcessingTime");
+
+										JSONObject aHostFileSize = responseJSON.getJSONObject("hostFileSize");
+										JSONObject eHostFileSize = eventJSON.getJSONObject("hostFileSize");
+
+										for (String key : eHostResultSize.keySet())
+											aHostResultSize.put(key, eHostResultSize.getLong(key));
+										for (String key : eHostResultSize.keySet())
+											aHostProcessingTime.put(key, eHostProcessingTime.getLong(key));
+										for (String key : eHostResultSize.keySet())
+											aHostFileSize.put(key, eHostFileSize.getLong(key));
+
+										responseJSON.put("totalResultSize", responseJSON.getLong("totalResultSize")
+												+ eventJSON.getLong("totalResultSize"));
+										responseJSON.put("totalFileSize", responseJSON.getLong("totalFileSize")
+												+ eventJSON.getLong("totalFileSize"));
+										responseJSON.put("totalProcessingTime",
+												java.lang.Math.max(responseJSON.getLong("totalProcessingTime"),
+														eventJSON.getLong("totalProcessingTime")));
+										responseJSON.put("totalBlocksProcessed",
+												responseJSON.getLong("totalBlocksProcessed")
+														+ eventJSON.getLong("totalBlocksProcessed"));
+									}
+								}
+							}
+						}
+					}
+				} else if (event instanceof MetadataResponse && this.response instanceof MetadataResponse) {
+					MetadataResponse emr = (MetadataResponse) event;
+					JSONArray emrResults = emr.getResponse().getJSONArray("result");
+					JSONObject emrJSON = emr.getResponse();
+					if ("galileo#features".equalsIgnoreCase(emrJSON.getString("kind"))) {
+						for (int i = 0; i < emrResults.length(); i++) {
+							JSONObject fsJSON = emrResults.getJSONObject(i);
+							for (String fsName : fsJSON.keySet()) {
+								Set<LocalFeature> featureSet = resultMap.get(fsName);
+								if (featureSet == null) {
+									featureSet = new HashSet<LocalFeature>();
+									resultMap.put(fsName, featureSet);
+								}
+								JSONArray features = fsJSON.getJSONArray(fsName);
+								for (int j = 0; j < features.length(); j++) {
+									JSONObject jsonFeature = features.getJSONObject(j);
+									featureSet.add(new LocalFeature(jsonFeature.getString("name"),
+											jsonFeature.getString("type"), jsonFeature.getInt("order")));
+								}
+							}
+						}
+						if (this.responses.size() == responseCount) {
+							JSONObject jsonResponse = new JSONObject();
+							jsonResponse.put("kind", "galileo#features");
+							JSONArray fsArray = new JSONArray();
+							for (String fsName : resultMap.keySet()) {
+								JSONObject fsJSON = new JSONObject();
+								JSONArray features = new JSONArray();
+								for (LocalFeature feature : new TreeSet<>(resultMap.get(fsName)))
+									features.put(new JSONObject().put("name", feature.name).put("type", feature.type)
+											.put("order", feature.order));
+								fsJSON.put(fsName, features);
+								fsArray.put(fsJSON);
+							}
+							jsonResponse.put("result", fsArray);
+							this.response = new MetadataResponse(jsonResponse);
+						}
+					} else if ("galileo#filesystem".equalsIgnoreCase(emrJSON.getString("kind"))) {
+						MetadataResponse amr = (MetadataResponse) this.response;
+						JSONObject amrJSON = amr.getResponse();
+						if (amrJSON.getJSONArray("result").length() == 0)
+							amrJSON.put("result", emrResults);
+						else {
+							JSONArray amrResults = amrJSON.getJSONArray("result");
+							for (int i = 0; i < emrResults.length(); i++) {
+								JSONObject emrFilesystem = emrResults.getJSONObject(i);
+								for (int j = 0; j < amrResults.length(); j++) {
+									JSONObject amrFilesystem = amrResults.getJSONObject(j);
+									if (amrFilesystem.getString("name")
+											.equalsIgnoreCase(emrFilesystem.getString("name"))) {
+										long latestTime = amrFilesystem.getLong("latestTime");
+										long earliestTime = amrFilesystem.getLong("earliestTime");
+										if (latestTime == 0 || latestTime < emrFilesystem.getLong("latestTime")) {
+											amrFilesystem.put("latestTime", emrFilesystem.getLong("latestTime"));
+											amrFilesystem.put("latestSpace", emrFilesystem.getString("latestSpace"));
+										}
+										if (earliestTime == 0 || (earliestTime > emrFilesystem.getLong("earliestTime")
+												&& emrFilesystem.getLong("earliestTime") != 0)) {
+											amrFilesystem.put("earliestTime", emrFilesystem.getLong("earliestTime"));
+											amrFilesystem.put("earliestSpace",
+													emrFilesystem.getString("earliestSpace"));
+										}
+										break;
+									}
+								}
+							}
+						}
+					} else if ("galileo#overview".equalsIgnoreCase(emrJSON.getString("kind"))) {
+						logger.info(emrJSON.getString("kind") + ": emr results length = " + emrResults.length());
+						MetadataResponse amr = (MetadataResponse) this.response;
+						JSONObject amrJSON = amr.getResponse();
+						if (amrJSON.getJSONArray("result").length() == 0)
+							amrJSON.put("result", emrResults);
+						else {
+							JSONArray amrResults = amrJSON.getJSONArray("result");
+							for (int i = 0; i < emrResults.length(); i++) {
+								JSONObject efsJSON = emrResults.getJSONObject(i);
+								String efsName = efsJSON.keys().next();
+								JSONObject afsJSON = null;
+								for (int j = 0; j < amrResults.length(); j++) {
+									if (amrResults.getJSONObject(j).has(efsName)) {
+										afsJSON = amrResults.getJSONObject(j);
+										break;
+									}
+								}
+								if (afsJSON == null)
+									amrResults.put(efsJSON);
+								else {
+									JSONArray eGeohashes = efsJSON.getJSONArray(efsName);
+									JSONArray aGeohashes = afsJSON.getJSONArray(efsName);
+									for (int j = 0; j < eGeohashes.length(); j++) {
+										JSONObject eGeohash = eGeohashes.getJSONObject(j);
+										JSONObject aGeohash = null;
+										for (int k = 0; k < aGeohashes.length(); k++) {
+											if (aGeohashes.getJSONObject(k).getString("region")
+													.equalsIgnoreCase(eGeohash.getString("region"))) {
+												aGeohash = aGeohashes.getJSONObject(k);
+												break;
+											}
+										}
+										if (aGeohash == null)
+											aGeohashes.put(eGeohash);
+										else {
+											long eTimestamp = eGeohash.getLong("latestTimestamp");
+											int blockCount = aGeohash.getInt("blockCount")
+													+ eGeohash.getInt("blockCount");
+											long fileSize = aGeohash.getInt("fileSize") + eGeohash.getInt("fileSize");
+											aGeohash.put("blockCount", blockCount);
+											aGeohash.put("fileSize", fileSize);
+											if (eTimestamp > aGeohash.getLong("latestTimestamp"))
+												aGeohash.put("latestTimestamp", eTimestamp);
 										}
 									}
 								}
 							}
 						}
 					}
-				} else if (event instanceof MetaResponse && this.response instanceof MetaResponse) {
-					MetaResponse mr = (MetaResponse) event;
-					JSONArray results = mr.getResponse().getJSONArray("result");
-					for (int i = 0; i < results.length(); i++) {
-						JSONObject fsJSON = results.getJSONObject(i);
-						for (String fsName : fsJSON.keySet()) {
-							Set<LocalFeature> featureSet = resultMap.get(fsName);
-							if (featureSet == null) {
-								featureSet = new HashSet<LocalFeature>();
-								resultMap.put(fsName, featureSet);
-							}
-							JSONArray features = fsJSON.getJSONArray(fsName);
-							for (int j = 0; j < features.length(); j++) {
-								JSONObject jsonFeature = features.getJSONObject(j);
-								featureSet.add(new LocalFeature(jsonFeature.getString("name"),
-										jsonFeature.getString("type"), jsonFeature.getInt("order")));
-							}
-						}
-					}
-					if (this.responses.size() == responseCount) {
-						JSONObject jsonResponse = new JSONObject();
-						jsonResponse.put("kind", "galileo#features");
-						JSONArray fsArray = new JSONArray();
-						for (String fsName : resultMap.keySet()) {
-							JSONObject fsJSON = new JSONObject();
-							JSONArray features = new JSONArray();
-							for (LocalFeature feature : new TreeSet<>(resultMap.get(fsName)))
-								features.put(new JSONObject().put("name", feature.name).put("type", feature.type)
-										.put("order", feature.order));
-							fsJSON.put(fsName, features);
-							fsArray.put(fsJSON);
-						}
-						jsonResponse.put("result", fsArray);
-						this.response = new MetaResponse(jsonResponse);
-					}
 				}
 			} catch (IOException | SerializationException e) {
 				logger.log(Level.INFO, "An exception occurred while processing the response message. Details follow:"
 						+ e.getMessage());
 			} catch (Exception e) {
-				logger.log(Level.SEVERE, "An unknown exception occurred while processing the response message. Details follow:"
-						+ e.getMessage());
+				logger.log(Level.SEVERE,
+						"An unknown exception occurred while processing the response message. Details follow:"
+								+ e.getMessage());
 			}
 		}
 		this.requestListener.onRequestCompleted(this.response, clientContext, this);
@@ -227,11 +315,15 @@ public class ClientRequestHandler implements MessageListener {
 			this.responses.add(message);
 		int awaitedResponses = this.expectedResponses.decrementAndGet();
 		logger.log(Level.INFO, "Awaiting " + awaitedResponses + " more message(s)");
-		if (awaitedResponses > 0) // extend timer when awaiting more responses
-			this.timeout.set(System.currentTimeMillis() + DELAY);
-		else
-			this.timeout.set(System.currentTimeMillis()); // send response
-															// immediately
+		if (awaitedResponses <= 0) {
+			this.elapsedTime = System.currentTimeMillis() - this.elapsedTime;
+			logger.log(Level.INFO, "Closing the request and sending back the response.");
+			new Thread() {
+				public void run() {
+					ClientRequestHandler.this.closeRequest();
+				}
+			}.start();
+		}
 	}
 
 	/**
@@ -251,11 +343,7 @@ public class ClientRequestHandler implements MessageListener {
 				this.router.sendMessage(node, mrequest);
 				logger.info("Request sent to " + node.toString());
 			}
-
-			// Timeout thread which sets expectedResponses to zero after the
-			// specified time elapses.
-			this.timeout.set(System.currentTimeMillis() + DELAY);
-			this.timerThread.start();
+			this.elapsedTime = System.currentTimeMillis();
 		} catch (IOException e) {
 			logger.log(Level.INFO,
 					"Failed to send request to other nodes in the network. Details follow: " + e.getMessage());

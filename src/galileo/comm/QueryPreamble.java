@@ -43,18 +43,18 @@ import galileo.serialization.SerializationOutputStream;
  */
 public class QueryPreamble implements Event {
     private String id;
-    private String query;
+    private String filesystem;
     private List<NodeInfo> nodesInvolved = new ArrayList<>();
 
-    public QueryPreamble(String id, String query,
+    public QueryPreamble(String id, String filesystem,
             List<NodeInfo> nodesInvolved) {
         this.id = id;
-        this.query = query;
+        this.filesystem = filesystem;
         this.nodesInvolved = nodesInvolved;
     }
 
-    public String getQueryString() {
-        return query;
+    public String getFilesystem() {
+        return this.filesystem;
     }
 
     public String getQueryId() {
@@ -73,7 +73,7 @@ public class QueryPreamble implements Event {
     public QueryPreamble(SerializationInputStream in)
     throws IOException, SerializationException {
         id = in.readString();
-        query = in.readString();
+        filesystem = in.readString();
         in.readSerializableCollection(NodeInfo.class, nodesInvolved);
     }
 
@@ -81,7 +81,7 @@ public class QueryPreamble implements Event {
     public void serialize(SerializationOutputStream out)
     throws IOException {
         out.writeString(id);
-        out.writeString(query);
+        out.writeString(filesystem);
         out.writeSerializableCollection(nodesInvolved);
     }
 }

@@ -28,7 +28,6 @@ package galileo.samples;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Random;
 
 import galileo.client.EventPublisher;
@@ -39,7 +38,6 @@ import galileo.comm.StorageRequest;
 import galileo.dataset.feature.Feature;
 import galileo.event.BasicEventWrapper;
 import galileo.event.EventWrapper;
-import galileo.graph.Path;
 import galileo.net.ClientMessageRouter;
 import galileo.net.GalileoMessage;
 import galileo.net.MessageListener;
@@ -142,7 +140,7 @@ public class RandomQuery implements MessageListener, Runnable {
 
 		Query q = randomQuery();
 		System.out.println(q);
-		QueryEvent qe = new QueryEvent(bi.toString(16), "samples", q);
+		QueryEvent qe = new QueryEvent(bi.toString(16), "samples", q, null);
 
 		resp.start();
 		messageRouter.sendMessage(server, EventPublisher.wrapEvent(qe));
@@ -178,22 +176,18 @@ public class RandomQuery implements MessageListener, Runnable {
 			QueryResponse response = (QueryResponse) wrapper.unwrap(message);
 			System.out.println(response.getResults().size() + " results received");
 
-			Map<String, List<Path<Feature, String>>> results = response.getResults();
-			for (String key : results.keySet()) {
-				System.out.println("First 5 results of " + key + ":");
+			List<List<String>> results = response.getResults();
+			int counter = 0;
+			for (List<String> path  : results) {
+				System.out.println("First 5 results");
 				int limit = 5;
 				if (results.size() < 5) {
 					limit = results.size();
 				}
-				int counter = 0;
-				for (Path<Feature, String> path : results.get(key)) {
-					if (path.size() > 1) {
-						System.out.println(path);
-						counter++;
-					}
-					if (counter == limit) {
-						break;
-					}
+				counter++;
+				System.out.println(path);
+				if (counter == limit) {
+					break;
 				}
 			}
 		} catch (Exception e) {

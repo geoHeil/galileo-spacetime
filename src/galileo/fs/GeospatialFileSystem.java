@@ -36,6 +36,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,10 +45,11 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.json.JSONArray;
+import org.json.JSONObject;
 
-import galileo.bmp.BitmapException;
 import galileo.bmp.GeoavailabilityMap;
 import galileo.bmp.GeoavailabilityQuery;
+import galileo.comm.TemporalType;
 import galileo.dataset.Block;
 import galileo.dataset.Coordinates;
 import galileo.dataset.Metadata;
@@ -59,7 +61,16 @@ import galileo.dataset.TemporalProperties;
 import galileo.dataset.feature.Feature;
 import galileo.dataset.feature.FeatureSet;
 import galileo.dataset.feature.FeatureType;
-import galileo.graph.FeatureHierarchy;
+import galileo.dht.GroupInfo;
+import galileo.dht.NetworkInfo;
+import galileo.dht.NodeInfo;
+import galileo.dht.PartitionException;
+import galileo.dht.Partitioner;
+import galileo.dht.StorageNode;
+import galileo.dht.TemporalHierarchyPartitioner;
+import galileo.dht.hash.HashException;
+import galileo.dht.hash.HashTopologyException;
+import galileo.dht.hash.TemporalHash;
 import galileo.graph.FeaturePath;
 import galileo.graph.MetadataGraph;
 import galileo.graph.Path;
@@ -85,10 +96,23 @@ public class GeospatialFileSystem extends FileSystem {
 
 	private static final Logger logger = Logger.getLogger("galileo");
 
-	private static final String DEFAULT_TIME_FORMAT = "yyyy/M/d";
+	private static final String DEFAULT_TIME_FORMAT = "yyyy" + File.separator + "M" + File.separator + "d";
 	private static final int DEFAULT_GEOHASH_PRECISION = 4;
+	public static final int MAX_GRID_POINTS = 100000;
 
 	private static final String pathStore = "metadata.paths";
+
+	private NetworkInfo network;
+	private Partitioner<Metadata> partitioner;
+	private TemporalType temporalType;
+	private int nodesPerGroup;
+	/*
+	 * Must be comma-separated name:type string where type is an int returned by
+	 * FeatureType
+	 */
+	private List<Pair<String, FeatureType>> featureList;
+	private SpatialHint spatialHint;
+	private String storageRoot;
 
 	private MetadataGraph metadataGraph;
 
@@ -97,26 +121,103 @@ public class GeospatialFileSystem extends FileSystem {
 	private SimpleDateFormat timeFormatter;
 	private String timeFormat;
 	private int geohashPrecision;
-	private TemporalProperties lastModified;
+	private TemporalProperties latestTime;
+	private TemporalProperties earliestTime;
+	private String latestSpace;
+	private String earliestSpace;
 
-	private static final String TEMPORAL_FEATURE = "x__temporal__x";
+	private static final String TEMPORAL_YEAR_FEATURE = "x__year__x";
+	private static final String TEMPORAL_MONTH_FEATURE = "x__month__x";
+	private static final String TEMPORAL_DAY_FEATURE = "x__day__x";
+	private static final String TEMPORAL_HOUR_FEATURE = "x__hour__x";
 	private static final String SPATIAL_FEATURE = "x__spatial__x";
 
-	public GeospatialFileSystem(String storageDirectory, String name)
-			throws FileSystemException, IOException, SerializationException {
-		super(storageDirectory, name);
+	public GeospatialFileSystem(StorageNode sn, String storageDirectory, String name, int precision, int nodesPerGroup,
+			int temporalType, NetworkInfo networkInfo, String featureList, SpatialHint sHint, boolean ignoreIfPresent)
+			throws FileSystemException, IOException, SerializationException, PartitionException, HashException,
+			HashTopologyException {
+		super(storageDirectory, name, ignoreIfPresent);
+
+		this.nodesPerGroup = nodesPerGroup;
+		if (featureList != null) {
+			this.featureList = new ArrayList<>();
+			for (String nameType : featureList.split(",")) {
+				String[] pair = nameType.split(":");
+				this.featureList
+						.add(new Pair<String, FeatureType>(pair[0], FeatureType.fromInt(Integer.parseInt(pair[1]))));
+			}
+		}
+		this.spatialHint = sHint;
+		if (this.featureList != null && this.spatialHint == null)
+			throw new IllegalArgumentException("Spatial hint is needed when feature list is provided");
+		this.storageRoot = storageDirectory;
+		this.temporalType = TemporalType.fromType(temporalType);
+
+		if (nodesPerGroup <= 0)
+			this.network = networkInfo;
+		else {
+			this.network = new NetworkInfo();
+			GroupInfo groupInfo = null;
+			List<NodeInfo> allNodes = networkInfo.getAllNodes();
+			Collections.sort(allNodes);
+			TemporalHash th = new TemporalHash(this.temporalType);
+			int maxGroups = th.maxValue().intValue();
+			for (int i = 0; i < allNodes.size(); i++) {
+				if (this.network.getGroups().size() < maxGroups) {
+					if (i % nodesPerGroup == 0) {
+						groupInfo = new GroupInfo(String.valueOf(i / nodesPerGroup));
+						groupInfo.addNode(allNodes.get(i));
+						this.network.addGroup(groupInfo);
+					} else {
+						groupInfo.addNode(allNodes.get(i));
+					}
+				}
+			}
+		}
+
+		this.partitioner = new TemporalHierarchyPartitioner(sn, this.network, this.temporalType.getType());
 
 		this.timeFormat = System.getProperty("galileo.fs.GeospatialFileSystem.timeFormat", DEFAULT_TIME_FORMAT);
+		int maxPrecision = GeoHash.MAX_PRECISION / 5;
+		this.geohashPrecision = (precision < 0) ? DEFAULT_GEOHASH_PRECISION
+				: (precision > maxPrecision) ? maxPrecision : precision;
 
-		this.geohashPrecision = Integer.parseInt(System.getProperty("galileo.fs.GeospatialFileSystem.geohashPrecision",
-				String.valueOf(DEFAULT_GEOHASH_PRECISION)));
-
-		timeFormatter = new SimpleDateFormat();
-		timeFormatter.setTimeZone(TimeZone.getTimeZone("GMT"));
-		timeFormatter.applyPattern(timeFormat);
-		pathJournal = new PathJournal(this.storageDirectory + File.separator + pathStore);
+		this.timeFormatter = new SimpleDateFormat();
+		this.timeFormatter.setTimeZone(TimeZone.getTimeZone("GMT"));
+		this.timeFormatter.applyPattern(timeFormat);
+		this.pathJournal = new PathJournal(this.storageDirectory + File.separator + pathStore);
 
 		createMetadataGraph();
+	}
+
+	public JSONArray getFeaturesRepresentation() {
+		JSONArray features = new JSONArray();
+		if (this.featureList != null) {
+			for (Pair<String, FeatureType> pair : this.featureList)
+				features.put(pair.a + ":" + pair.b.name());
+		}
+		return features;
+	}
+
+	public List<String> getFeaturesList() {
+		List<String> features = new ArrayList<String>();
+		if (this.featureList != null) {
+			for (Pair<String, FeatureType> pair : this.featureList)
+				features.add(pair.a + ":" + pair.b.name());
+		}
+		return features;
+	}
+
+	public NetworkInfo getNetwork() {
+		return this.network;
+	}
+
+	public Partitioner<Metadata> getPartitioner() {
+		return this.partitioner;
+	}
+
+	public TemporalType getTemporalType() {
+		return this.temporalType;
 	}
 
 	/**
@@ -151,25 +252,117 @@ public class GeospatialFileSystem extends FileSystem {
 		}
 	}
 
-	public long getLastUpdated() {
-		return this.lastModified.getStart();
+	public synchronized JSONObject obtainState() {
+		JSONObject state = new JSONObject();
+		state.put("name", this.name);
+		state.put("storageRoot", this.storageRoot);
+		state.put("precision", this.geohashPrecision);
+		state.put("nodesPerGroup", this.nodesPerGroup);
+		StringBuffer features = new StringBuffer();
+		if (this.featureList != null) {
+			for (Pair<String, FeatureType> pair : this.featureList)
+				features.append(pair.a + ":" + pair.b.toInt() + ",");
+			features.setLength(features.length() - 1);
+		}
+		state.put("featureList", this.featureList != null ? features.toString() : JSONObject.NULL);
+		JSONObject spHint = null;
+		if (this.spatialHint != null) {
+			spHint = new JSONObject();
+			spHint.put("latHint", this.spatialHint.getLatitudeHint());
+			spHint.put("lngHint", this.spatialHint.getLongitudeHint());
+		}
+		state.put("spatialHint", spHint == null ? JSONObject.NULL : spHint);
+		state.put("temporalType", this.temporalType.getType());
+		state.put("temporalString", this.temporalType.name());
+		state.put("earliestTime", this.earliestTime != null ? this.earliestTime.getStart() : JSONObject.NULL);
+		state.put("earliestSpace", this.earliestSpace != null ? this.earliestSpace : JSONObject.NULL);
+		state.put("latestTime", this.latestTime != null ? this.latestTime.getEnd() : JSONObject.NULL);
+		state.put("latestSpace", this.latestSpace != null ? this.latestSpace : JSONObject.NULL);
+		state.put("readOnly", this.isReadOnly());
+		return state;
+	}
+
+	public static GeospatialFileSystem restoreState(StorageNode storageNode, NetworkInfo networkInfo, JSONObject state)
+			throws FileSystemException, IOException, SerializationException, PartitionException, HashException,
+			HashTopologyException {
+		String name = state.getString("name");
+		String storageRoot = state.getString("storageRoot");
+		int geohashPrecision = state.getInt("precision");
+		int nodesPerGroup = state.getInt("nodesPerGroup");
+		String featureList = null;
+		if (state.get("featureList") != JSONObject.NULL)
+			featureList = state.getString("featureList");
+		int temporalType = state.getInt("temporalType");
+		SpatialHint spHint = null;
+		if (state.get("spatialHint") != JSONObject.NULL) {
+			JSONObject spHintJSON = state.getJSONObject("spatialHint");
+			spHint = new SpatialHint(spHintJSON.getString("latHint"), spHintJSON.getString("lngHint"));
+		}
+		GeospatialFileSystem gfs = new GeospatialFileSystem(storageNode, storageRoot, name, geohashPrecision,
+				nodesPerGroup, temporalType, networkInfo, featureList, spHint, true);
+		gfs.earliestTime = (state.get("earliestTime") != JSONObject.NULL)
+				? new TemporalProperties(state.getLong("earliestTime")) : null;
+		gfs.earliestSpace = (state.get("earliestSpace") != JSONObject.NULL) ? state.getString("earliestSpace") : null;
+		gfs.latestTime = (state.get("latestTime") != JSONObject.NULL)
+				? new TemporalProperties(state.getLong("latestTime")) : null;
+		gfs.latestSpace = (state.get("latestSpace") != JSONObject.NULL) ? state.getString("latestSpace") : null;
+		return gfs;
+	}
+
+	public long getLatestTime() {
+		if (this.latestTime != null)
+			return this.latestTime.getEnd();
+		return 0;
+	}
+
+	public long getEarliestTime() {
+		if (this.earliestTime != null)
+			return this.earliestTime.getStart();
+		return 0;
+	}
+
+	public String getLatestSpace() {
+		if (this.latestSpace != null)
+			return this.latestSpace;
+		return "";
+	}
+
+	public String getEarliestSpace() {
+		if (this.earliestSpace != null)
+			return this.earliestSpace;
+		return "";
+	}
+
+	public int getGeohashPrecision() {
+		return this.geohashPrecision;
 	}
 
 	private String getTemporalString(TemporalProperties tp) {
 		if (tp == null)
-			return "xxxx-xx-xx";
+			return "xxxx-xx-xx-xx";
 		Calendar c = Calendar.getInstance();
-		c.setTimeZone(TimeZone.getTimeZone("GMT"));
+		c.setTimeZone(TemporalHash.TIMEZONE);
 		c.setTimeInMillis(tp.getStart());
+		int hour = c.get(Calendar.HOUR_OF_DAY);
 		int day = c.get(Calendar.DAY_OF_MONTH);
 		int month = c.get(Calendar.MONTH) + 1;
 		int year = c.get(Calendar.YEAR);
-		return String.format("%d-%d-%d", year, month, day);
+		switch (this.temporalType) {
+		case HOUR_OF_DAY:
+			return String.format("%d-%d-%d-%d", year, month, day, hour);
+		case DAY_OF_MONTH:
+			return String.format("%d-%d-%d-xx", year, month, day);
+		case MONTH:
+			return String.format("%d-%d-xx-xx", year, month);
+		case YEAR:
+			return String.format("%d-xx-xx-xx", year);
+		}
+		return String.format("%d-%d-%d-xx", year, month, day);
 	}
 
 	private String getSpatialString(SpatialProperties sp) {
 		char[] hash = new char[this.geohashPrecision];
-		Arrays.fill(hash, 'x');
+		Arrays.fill(hash, 'o');
 		String geohash = new String(hash);
 		if (sp == null)
 			return geohash;
@@ -183,16 +376,18 @@ public class GeospatialFileSystem extends FileSystem {
 	}
 
 	/**
-	 * Creates a new block if one does not exist based on the spatio-temporal
-	 * properties of the metadata or appends the bytes to an existing block.
+	 * Creates a new block if one does not exist based on the name of the
+	 * metadata or appends the bytes to an existing block in which case the
+	 * metadata in the graph will not be updated.
 	 */
 	@Override
 	public String storeBlock(Block block) throws FileSystemException, IOException {
-		if (lastModified == null || lastModified.getStart() < block.getMetadata().getTemporalProperties().getStart())
-			lastModified = block.getMetadata().getTemporalProperties();
-		String time = getTemporalString(block.getMetadata().getTemporalProperties());
-		String geohash = getSpatialString(block.getMetadata().getSpatialProperties());
+		Metadata meta = block.getMetadata();
+		String time = getTemporalString(meta.getTemporalProperties());
+		String geohash = getSpatialString(meta.getSpatialProperties());
 		String name = String.format("%s-%s", time, geohash);
+		if (meta.getName() != null && meta.getName().trim() != "")
+			name = meta.getName();
 		String blockDirPath = this.storageDirectory + File.separator + getStorageDirectory(block);
 		String blockPath = blockDirPath + File.separator + name + FileSystem.BLOCK_EXTENSION;
 
@@ -204,22 +399,16 @@ public class GeospatialFileSystem extends FileSystem {
 			}
 		}
 
-		Metadata meta = block.getMetadata();
-		String blockString = "";
-		if (block.getData() == null) {
-			FeatureSet featureSet = meta.getAttributes();
-			for (Feature feature : featureSet)
-				blockString += feature.dataToString() + ",";
-			if (blockString.length() > 1)
-				blockString = blockString.substring(0, blockString.length() - 1);
-		} else {
-			blockString = new String(block.getData(), "UTF-8");
-		}
+		String blockString = new String(block.getData(), "UTF-8");
 
 		// Adding temporal and spatial features at the top to the existing
 		// attributes
 		FeatureSet newfs = new FeatureSet();
-		newfs.put(new Feature(TEMPORAL_FEATURE, getTemporalString(meta.getTemporalProperties())));
+		String[] temporalFeature = time.split("-");
+		newfs.put(new Feature(TEMPORAL_YEAR_FEATURE, temporalFeature[0]));
+		newfs.put(new Feature(TEMPORAL_MONTH_FEATURE, temporalFeature[1]));
+		newfs.put(new Feature(TEMPORAL_DAY_FEATURE, temporalFeature[2]));
+		newfs.put(new Feature(TEMPORAL_HOUR_FEATURE, temporalFeature[3]));
 		newfs.put(new Feature(SPATIAL_FEATURE, getSpatialString(meta.getSpatialProperties())));
 		for (Feature feature : meta.getAttributes())
 			newfs.put(feature);
@@ -237,15 +426,14 @@ public class GeospatialFileSystem extends FileSystem {
 				dataBuffer.append(blockString);
 				// over-write the existing block with new blocks data. metadata
 				// is not changed.
-				block = new Block(existingBlock.getFileSystem(), existingBlock.getMetadata(),
+				block = new Block(existingBlock.getFilesystem(), existingBlock.getMetadata(),
 						dataBuffer.toString().getBytes("UTF-8"));
 			} catch (SerializationException e) {
 				throw new IOException("Failed to deserialize the existing block - " + e.getMessage(), e.getCause());
 			}
 		} else {
-			FeaturePath<String> path = createPath(blockPath, meta);
 			try {
-				metadataGraph.addPath(path);
+				storeMetadata(meta, blockPath);
 			} catch (Exception e) {
 				throw new FileSystemException("Error storing block: " + e.getClass().getCanonicalName(), e);
 			}
@@ -254,6 +442,17 @@ public class GeospatialFileSystem extends FileSystem {
 		byte[] blockData = Serializer.serialize(block);
 		blockOutStream.write(blockData);
 		blockOutStream.close();
+
+		if (latestTime == null || latestTime.getEnd() < meta.getTemporalProperties().getEnd()) {
+			this.latestTime = meta.getTemporalProperties();
+			this.latestSpace = geohash;
+		}
+
+		if (earliestTime == null || earliestTime.getStart() > meta.getTemporalProperties().getStart()) {
+			this.earliestTime = meta.getTemporalProperties();
+			this.earliestSpace = geohash;
+		}
+
 		return blockPath;
 	}
 
@@ -288,84 +487,278 @@ public class GeospatialFileSystem extends FileSystem {
 		return timeFormatter.format(tp.getLowerBound());
 	}
 
-	public Map<String, List<String>> listBlocks(Metadata metadata) {
-			Map<String, List<String>> blockMap = new HashMap<String, List<String>>();
-			List<String> blocks = new ArrayList<String>();
-			if (metadata.hasTemporalProperties() && metadata.hasSpatialProperties()) {
-				String time = getTemporalString(metadata.getTemporalProperties());
-				String space = getSpatialString(metadata.getSpatialProperties());
-				Query query = new Query(
-						new Operation(new Expression(Operator.EQUAL, new Feature(TEMPORAL_FEATURE, time)),
-								new Expression(Operator.EQUAL, new Feature(SPATIAL_FEATURE, space))));
-				List<Path<Feature, String>> paths = metadataGraph.evaluateQuery(query);
-				for (Path<Feature, String> path : paths)
-					if (path.hasPayload())
-						blocks.addAll(path.getPayload());
-				blockMap.put(String.format("%s-%s", time, space), blocks);
-				return blockMap;
-			} else if (metadata.hasTemporalProperties()) {
-				String time = getTemporalString(metadata.getTemporalProperties());
-				Query query = new Query(
-						new Operation(new Expression(Operator.EQUAL, new Feature(TEMPORAL_FEATURE, time))));
-				List<Path<Feature, String>> paths = metadataGraph.evaluateQuery(query);
-				for (Path<Feature, String> path : paths) {
-					if (path.hasPayload()) {
-						List<Feature> labels = path.getLabels();
-						for (Feature label : labels) {
-							if (SPATIAL_FEATURE.equalsIgnoreCase(label.getName())) {
-								blocks = blockMap.get(String.format("%s-%s", time, label.getString()));
-								if (blocks == null) {
-									blocks = new ArrayList<String>();
-									blockMap.put(String.format("%s-%s", time, label.getString()), blocks);
-								}
-								blocks.addAll(path.getPayload());
-								break;
-							}
-						}
-					}
+	private List<Expression> buildTemporalExpression(String temporalProperties) {
+		List<Expression> temporalExpressions = new ArrayList<Expression>();
+		String[] temporalFeatures = temporalProperties.split("-");
+		int length = (temporalFeatures.length <= 4) ? temporalFeatures.length : 4;
+		for (int i = 0; i < length; i++) {
+			if (temporalFeatures[i].charAt(0) != 'x') {
+				String temporalFeature = temporalFeatures[i];
+				if (temporalFeature.charAt(0) == '0')
+					temporalFeature = temporalFeature.substring(1);
+				Feature feature = null;
+				switch (i) {
+				case 0:
+					feature = new Feature(TEMPORAL_YEAR_FEATURE, temporalFeature);
+					break;
+				case 1:
+					feature = new Feature(TEMPORAL_MONTH_FEATURE, temporalFeature);
+					break;
+				case 2:
+					feature = new Feature(TEMPORAL_DAY_FEATURE, temporalFeature);
+					break;
+				case 3:
+					feature = new Feature(TEMPORAL_HOUR_FEATURE, temporalFeature);
+					break;
 				}
-				return blockMap;
-			} else if (metadata.hasSpatialProperties()) {
-				SpatialProperties sp = metadata.getSpatialProperties();
-				String[] geohashes = new String[] {};
-				if (sp.hasRange()) {
-					geohashes = sp.getSpatialRange().hasPolygon()
-							? GeoHash.getIntersectingGeohashes(sp.getSpatialRange().getPolygon(), this.geohashPrecision)
-							: GeoHash.getIntersectingGeohashes(sp.getSpatialRange().getBounds(), this.geohashPrecision);
-				}
-				String space = getSpatialString(sp);
-				for (String geohash : geohashes) {
-					Query query = new Query(
-							new Operation(new Expression(Operator.EQUAL, new Feature(SPATIAL_FEATURE, geohash))));
-					List<Path<Feature, String>> paths = metadataGraph.evaluateQuery(query);
-					for (Path<Feature, String> path : paths) {
-						if (path.hasPayload()) {
-							List<Feature> labels = path.getLabels();
-							for (Feature label : labels) {
-								if (TEMPORAL_FEATURE.equalsIgnoreCase(label.getName())) {
-									blocks = blockMap.get(String.format("%s-%s", label.getString(), space));
-									if (blocks == null) {
-										blocks = new ArrayList<String>();
-										blockMap.put(String.format("%s-%s", label.getString(), space), blocks);
-									}
-									blocks.addAll(path.getPayload());
-									break;
-								}
-							}
-						}
-					}
-				}
-				return blockMap;
-			} else {
-				// non-chronal non-spatial
-				String time = getTemporalString(null);
-				String space = getSpatialString(null);
-				for (Path<Feature, String> path : metadataGraph.getAllPaths())
-					if (path.hasPayload())
-						blocks.addAll(path.getPayload());
-				blockMap.put(String.format("%s-%s", time, space), blocks);
-				return blockMap;
+				temporalExpressions.add(new Expression(Operator.EQUAL, feature));
 			}
+		}
+		return temporalExpressions;
+	}
+
+	private String getGroupKey(Path<Feature, String> path, String space) {
+		if (null != path && path.hasPayload()) {
+			List<Feature> labels = path.getLabels();
+			String year = "xxxx", month = "xx", day = "xx", hour = "xx";
+			int allset = (space == null) ? 0 : 1;
+			for (Feature label : labels) {
+				switch (label.getName().toLowerCase()) {
+				case TEMPORAL_YEAR_FEATURE:
+					year = label.getString();
+					allset++;
+					break;
+				case TEMPORAL_MONTH_FEATURE:
+					month = label.getString();
+					allset++;
+					break;
+				case TEMPORAL_DAY_FEATURE:
+					day = label.getString();
+					allset++;
+					break;
+				case TEMPORAL_HOUR_FEATURE:
+					hour = label.getString();
+					allset++;
+					break;
+				case SPATIAL_FEATURE:
+					if (space == null) {
+						space = label.getString();
+						allset++;
+					}
+					break;
+				}
+				if (allset == 5)
+					break;
+			}
+			return String.format("%s-%s-%s-%s-%s", year, month, day, hour, space);
+		}
+		return String.format("%s-%s", getTemporalString(null), (space == null) ? getSpatialString(null) : space);
+	}
+
+	private String getSpaceKey(Path<Feature, String> path) {
+		if (null != path && path.hasPayload()) {
+			List<Feature> labels = path.getLabels();
+			for (Feature label : labels)
+				if (label.getName().toLowerCase().equals(SPATIAL_FEATURE))
+					return label.getString();
+		}
+		return getSpatialString(null);
+	}
+
+	private Query queryIntersection(Query q1, Query q2) {
+		if (q1 == null && q2 == null)
+			return null;
+		else if (q1 != null && q2 == null)
+			return q1;
+		else if (q1 == null && q2 != null)
+			return q2;
+		else {
+			Query query = new Query();
+			for (Operation q1Op : q1.getOperations()) {
+				for (Operation q2Op : q2.getOperations()) {
+					Operation op = new Operation(q1Op.getExpressions());
+					op.addExpressions(q2Op.getExpressions());
+					query.addOperation(op);
+				}
+			}
+			return query;
+		}
+	}
+
+	public Map<String, List<String>> listBlocks(String temporalProperties, List<Coordinates> spatialProperties,
+			Query metaQuery, boolean group) {
+		Map<String, List<String>> blockMap = new HashMap<String, List<String>>();
+		String space = null;
+		List<Path<Feature, String>> paths = null;
+		List<String> blocks = new ArrayList<String>();
+		if (temporalProperties != null && spatialProperties != null) {
+			SpatialProperties sp = new SpatialProperties(new SpatialRange(spatialProperties));
+			space = getSpatialString(sp);
+			String[] geohashes = new String[] {};
+			if (sp.hasRange()) {
+				geohashes = sp.getSpatialRange().hasPolygon()
+						? GeoHash.getIntersectingGeohashes(sp.getSpatialRange().getPolygon(), this.geohashPrecision)
+						: GeoHash.getIntersectingGeohashes(sp.getSpatialRange().getBounds(), this.geohashPrecision);
+			}
+
+			Query query = new Query();
+			List<Expression> temporalExpressions = buildTemporalExpression(temporalProperties);
+			for (String geohash : geohashes) {
+				Operation op = new Operation(temporalExpressions);
+				op.addExpressions(new Expression(Operator.EQUAL, new Feature(SPATIAL_FEATURE, geohash)));
+				query.addOperation(op);
+			}
+			paths = metadataGraph.evaluateQuery(queryIntersection(query, metaQuery));
+		} else if (temporalProperties != null) {
+			List<Expression> temporalExpressions = buildTemporalExpression(temporalProperties);
+			Query query = new Query(
+					new Operation(temporalExpressions.toArray(new Expression[temporalExpressions.size()])));
+			paths = metadataGraph.evaluateQuery(queryIntersection(query, metaQuery));
+		} else if (spatialProperties != null) {
+			SpatialProperties sp = new SpatialProperties(new SpatialRange(spatialProperties));
+			String[] geohashes = new String[] {};
+			if (sp.hasRange()) {
+				geohashes = sp.getSpatialRange().hasPolygon()
+						? GeoHash.getIntersectingGeohashes(sp.getSpatialRange().getPolygon(), this.geohashPrecision)
+						: GeoHash.getIntersectingGeohashes(sp.getSpatialRange().getBounds(), this.geohashPrecision);
+			}
+			space = getSpatialString(sp);
+			Query query = new Query();
+			for (String geohash : geohashes)
+				query.addOperation(
+						new Operation(new Expression(Operator.EQUAL, new Feature(SPATIAL_FEATURE, geohash))));
+			paths = metadataGraph.evaluateQuery(queryIntersection(query, metaQuery));
+		} else {
+			// non-chronal non-spatial
+			paths = (metaQuery == null) ? metadataGraph.getAllPaths() : metadataGraph.evaluateQuery(metaQuery);
+		}
+		for (Path<Feature, String> path : paths) {
+			String groupKey = group ? getGroupKey(path, space) : getSpaceKey(path);
+			blocks = blockMap.get(groupKey);
+			if (blocks == null) {
+				blocks = new ArrayList<String>();
+				blockMap.put(groupKey, blocks);
+			}
+			blocks.addAll(path.getPayload());
+		}
+		return blockMap;
+	}
+
+	private class Tracker {
+		private int occurrence;
+		private long fileSize;
+		private long timestamp;
+
+		public Tracker(long filesize, long millis) {
+			this.occurrence = 1;
+			this.fileSize = filesize;
+			this.timestamp = millis;
+		}
+
+		public void incrementOccurrence() {
+			this.occurrence++;
+		}
+
+		public int getOccurrence() {
+			return this.occurrence;
+		}
+
+		public void incrementFilesize(long value) {
+			this.fileSize += value;
+		}
+
+		public long getFilesize() {
+			return this.fileSize;
+		}
+
+		public void updateTimestamp(long millis) {
+			if (this.timestamp < millis)
+				this.timestamp = millis;
+		}
+
+		public long getTimestamp() {
+			return this.timestamp;
+		}
+	}
+
+	public JSONArray getOverview() {
+		JSONArray overviewJSON = new JSONArray();
+		Map<String, Tracker> geohashMap = new HashMap<String, Tracker>();
+		Calendar timestamp = Calendar.getInstance();
+		timestamp.setTimeZone(TemporalHash.TIMEZONE);
+		List<Path<Feature, String>> allPaths = metadataGraph.getAllPaths();
+		logger.info("all paths size: " + allPaths.size());
+		try {
+			for (Path<Feature, String> path : allPaths) {
+				long payloadSize = 0;
+				if (path.hasPayload()) {
+					for (String payload : path.getPayload()) {
+						try {
+							payloadSize += Files.size(java.nio.file.Paths.get(payload));
+						} catch (IOException e) { /* e.printStackTrace(); */
+							System.err.println("Exception occurred reading the block size. " + e.getMessage());
+						}
+					}
+				}
+				String geohash = path.get(4).getLabel().getString();
+				String yearFeature = path.get(0).getLabel().getString();
+				String monthFeature = path.get(1).getLabel().getString();
+				String dayFeature = path.get(2).getLabel().getString();
+				String hourFeature = path.get(3).getLabel().getString();
+				if (yearFeature.charAt(0) == 'x') {
+					System.err.println("Cannot build timestamp without year. Ignoring path");
+					continue;
+				}
+				if (monthFeature.charAt(0) == 'x')
+					monthFeature = "12";
+				if (hourFeature.charAt(0) == 'x')
+					hourFeature = "23";
+				int year = Integer.parseInt(yearFeature);
+				int month = Integer.parseInt(monthFeature) - 1;
+				if (dayFeature.charAt(0) == 'x') {
+					Calendar cal = Calendar.getInstance();
+					cal.setTimeZone(TemporalHash.TIMEZONE);
+					cal.set(Calendar.YEAR, year);
+					cal.set(Calendar.MONTH, month);
+					dayFeature = String.valueOf(cal.getActualMaximum(Calendar.DAY_OF_MONTH));
+				}
+				int day = Integer.parseInt(dayFeature);
+				int hour = Integer.parseInt(hourFeature);
+				timestamp.set(year, month, day, hour, 59, 59);
+
+				Tracker geohashTracker = geohashMap.get(geohash);
+				if (geohashTracker == null) {
+					geohashMap.put(geohash, new Tracker(payloadSize, timestamp.getTimeInMillis()));
+				} else {
+					geohashTracker.incrementOccurrence();
+					geohashTracker.incrementFilesize(payloadSize);
+					geohashTracker.updateTimestamp(timestamp.getTimeInMillis());
+				}
+			}
+		} catch (Exception e) {
+			logger.log(Level.SEVERE, "failed to process a path", e);
+		}
+
+		logger.info("geohash map size: " + geohashMap.size());
+		for (String geohash : geohashMap.keySet()) {
+			Tracker geohashTracker = geohashMap.get(geohash);
+			JSONObject geohashJSON = new JSONObject();
+			geohashJSON.put("region", geohash);
+			List<Coordinates> boundingBox = GeoHash.decodeHash(geohash).getBounds();
+			JSONArray bbJSON = new JSONArray();
+			for (Coordinates coordinates : boundingBox) {
+				JSONObject vertex = new JSONObject();
+				vertex.put("lat", coordinates.getLatitude());
+				vertex.put("lng", coordinates.getLongitude());
+				bbJSON.put(vertex);
+			}
+			geohashJSON.put("spatialCoordinates", bbJSON);
+			geohashJSON.put("blockCount", geohashTracker.getOccurrence());
+			geohashJSON.put("fileSize", geohashTracker.getFilesize());
+			geohashJSON.put("latestTimestamp", geohashTracker.getTimestamp());
+			overviewJSON.put(geohashJSON);
+		}
+		return overviewJSON;
 	}
 
 	/**
@@ -400,102 +793,184 @@ public class GeospatialFileSystem extends FileSystem {
 		return metadataGraph.evaluateQuery(query);
 	}
 
-	public List<Path<Feature, String>> query(String blockPath, GeoavailabilityQuery geoQuery) throws IOException {
+	public List<Path<Feature, String>> query(String blockPath, Query query) throws IOException {
+		List<Path<Feature, String>> featurePaths = new ArrayList<Path<Feature, String>>();
 		try {
 			logger.info("querying filesystem " + this.name + " for block path - " + blockPath);
-			List<Path<Feature, String>> featurePaths = new ArrayList<Path<Feature, String>>();
+			if (this.featureList == null) {
+				logger.log(Level.SEVERE,
+						"This method should not be called for blocks not having point feature data stored");
+				return featurePaths;
+			}
+			if (this.spatialHint == null) {
+				logger.log(Level.SEVERE, "No spatial hint present for the filesystem - " + this.name);
+				return featurePaths;
+			}
 			byte[] blockBytes = Files.readAllBytes(Paths.get(blockPath));
 			Block block = Serializer.deserialize(Block.class, blockBytes);
 			String blockData = new String(block.getData(), "UTF-8");
-			Metadata blockMeta = block.getMetadata();
-			SpatialHint hint = blockMeta.getSpatialHint();
-			if (hint == null) {
-				logger.warning("No spatial hint present in the metadata for the block - " + blockPath);
-				return featurePaths;
-			}
+
 			MetadataGraph temporaryGraph = new MetadataGraph();
-			FeatureHierarchy hierarchy = metadataGraph.getFeatureHierarchy();
-			int latOrder = -1;
-			int longOrder = -1;
+			int splitLimit = this.featureList.size();
 			for (String line : blockData.split("\\r?\\n")) {
 				try {
-					String[] features = line.split(",");
-					// +2 because of the special reserved features.
-					if (hierarchy.size() == features.length + 2) {
-						List<Pair<String, FeatureType>> order = hierarchy.getHierarchy();
-						Metadata metadata = new Metadata();
-						FeatureSet featureset = new FeatureSet();
-						for (int i = 0; i < features.length; i++) {
-							// first two features are special reserved
-							// attributes - hence i+2
-							Pair<String, FeatureType> pair = order.get(i + 2);
-							if (latOrder == -1 && pair.a.equalsIgnoreCase(hint.getLatitudeHint()))
-								latOrder = i;
-							if (longOrder == -1 && pair.a.equalsIgnoreCase(hint.getLongitudeHint()))
-								longOrder = i;
-							if (pair.b == FeatureType.FLOAT)
-								featureset.put(new Feature(pair.a, Math.getFloat(features[i])));
-							if (pair.b == FeatureType.INT)
-								featureset.put(new Feature(pair.a, Math.getInteger(features[i])));
-							if (pair.b == FeatureType.LONG)
-								featureset.put(new Feature(pair.a, Math.getLong(features[i])));
-							if (pair.b == FeatureType.DOUBLE)
-								featureset.put(new Feature(pair.a, Math.getDouble(features[i])));
-							if (pair.b == FeatureType.STRING)
-								featureset.put(new Feature(pair.a, features[i]));
-						}
-						metadata.setAttributes(featureset);
-						Path<Feature, String> featurePath = createPath(blockPath, metadata);
-						temporaryGraph.addPath(featurePath);
+					String[] features = line.split(",", splitLimit);
+					Metadata metadata = new Metadata();
+					FeatureSet featureset = new FeatureSet();
+					for (int i = 0; i < features.length; i++) {
+						// first two features are special reserved
+						// attributes - hence i+2
+						Pair<String, FeatureType> pair = this.featureList.get(i);
+						if (pair.b == FeatureType.FLOAT)
+							featureset.put(new Feature(pair.a, Math.getFloat(features[i])));
+						if (pair.b == FeatureType.INT)
+							featureset.put(new Feature(pair.a, Math.getInteger(features[i])));
+						if (pair.b == FeatureType.LONG)
+							featureset.put(new Feature(pair.a, Math.getLong(features[i])));
+						if (pair.b == FeatureType.DOUBLE)
+							featureset.put(new Feature(pair.a, Math.getDouble(features[i])));
+						if (pair.b == FeatureType.STRING)
+							featureset.put(new Feature(pair.a, features[i]));
 					}
+					metadata.setAttributes(featureset);
+					Path<Feature, String> featurePath = createPath(blockPath, metadata);
+					temporaryGraph.addPath(featurePath);
 				} catch (Exception e) {
 					logger.warning(e.getMessage());
 				}
 			}
 			logger.info("Built temporary metadata graph");
-			featurePaths = geoQuery.getQuery() != null ? temporaryGraph.evaluateQuery(geoQuery.getQuery())
-					: temporaryGraph.getAllPaths();
-			if (geoQuery.getPolygon() != null) {
-				Polygon polygon = new Polygon();
-				for (Coordinates coords : geoQuery.getPolygon()) {
-					Point<Integer> point = GeoHash.coordinatesToXY(coords);
-					polygon.addPoint(point.X(), point.Y());
-				}
-				int hashendIndex = blockPath.lastIndexOf(File.separator);
-				String blockHash = blockPath.substring(hashendIndex - this.geohashPrecision, hashendIndex);
-				logger.info("checking geohash " + blockHash + " intersection with the polygon");
-				SpatialRange hashRange = GeoHash.decodeHash(blockHash);
-				Pair<Coordinates, Coordinates> pair = hashRange.get2DCoordinates();
-				Point<Integer> upperLeft = GeoHash.coordinatesToXY(pair.a);
-				Point<Integer> lowerRight = GeoHash.coordinatesToXY(pair.b);
-				if (polygon.contains(new Rectangle(upperLeft.X(), upperLeft.Y(), lowerRight.X() - upperLeft.X(),
-						lowerRight.Y() - upperLeft.Y())))
-					return featurePaths;
-				else {
-					if (latOrder != -1 && longOrder != -1) {
-						GeoavailabilityMap<Path<Feature, String>> geoMap = new GeoavailabilityMap<Path<Feature, String>>(
-								blockHash, GeoHash.MAX_PRECISION);
-						for (Path<Feature, String> fpath : featurePaths) {
-							float lat = fpath.get(latOrder).getLabel().getFloat();
-							float lon = fpath.get(longOrder).getLabel().getFloat();
-							if (!Float.isNaN(lat) && !Float.isNaN(lon))
-								geoMap.addPoint(new Coordinates(lat, lon), fpath);
-						}
-						List<Path<Feature, String>> results = new ArrayList<Path<Feature, String>>();
-						for (List<Path<Feature, String>> paths : geoMap.query(geoQuery).values())
-							results.addAll(paths);
-						logger.info("Number of paths in the considered block - " + results.size());
-						return results;
-					}
-				}
-			}
+			featurePaths = query != null ? temporaryGraph.evaluateQuery(query) : temporaryGraph.getAllPaths();
 			logger.info("Number of paths in the considered block - " + featurePaths.size());
-			return featurePaths;
-		} catch (SerializationException | IOException | BitmapException e) {
-			throw new IOException("Failed to query for the given block(" + blockPath + ") - " + e.getMessage(),
-					e.getCause());
+		} catch (SerializationException | IOException e) {
+			logger.log(Level.SEVERE, "Failed to query for the given block(" + blockPath + ") - " + e.getMessage(), e);
 		}
+		return featurePaths;
 	}
+
+	public List<Path<Feature, String>> query(String geohash, List<Path<Feature, String>> featurePaths,
+			List<Coordinates> queryPolygon) throws IOException {
+		if (featurePaths != null && featurePaths.size() > 0 && queryPolygon != null) {
+			List<Path<Feature, String>> resultPaths = new ArrayList<Path<Feature, String>>();
+			Polygon polygon = new Polygon();
+			for (Coordinates coords : queryPolygon) {
+				Point<Integer> point = GeoHash.coordinatesToXY(coords);
+				polygon.addPoint(point.X(), point.Y());
+			}
+			logger.info("checking geohash " + geohash + " intersection with the polygon");
+			SpatialRange hashRange = GeoHash.decodeHash(geohash);
+			Pair<Coordinates, Coordinates> pair = hashRange.get2DCoordinates();
+			Point<Integer> upperLeft = GeoHash.coordinatesToXY(pair.a);
+			Point<Integer> lowerRight = GeoHash.coordinatesToXY(pair.b);
+			if (polygon.contains(new Rectangle(upperLeft.X(), upperLeft.Y(), lowerRight.X() - upperLeft.X(),
+					lowerRight.Y() - upperLeft.Y())))
+				return featurePaths;
+			else {
+				int latOrder = -1, lngOrder = -1, index = 0;
+				for (Pair<String, FeatureType> columnPair : this.featureList) {
+					if (columnPair.a.equalsIgnoreCase(this.spatialHint.getLatitudeHint()))
+						latOrder = index++;
+					else if (columnPair.a.equalsIgnoreCase(this.spatialHint.getLongitudeHint()))
+						lngOrder = index++;
+					else
+						index++;
+				}
+
+				if (latOrder != -1 && lngOrder != -1) {
+					GeoavailabilityMap<Path<Feature, String>> geoMap = new GeoavailabilityMap<Path<Feature, String>>(
+							geohash, GeoHash.MAX_PRECISION * 2 / 3);
+					for (Path<Feature, String> fpath : featurePaths) {
+						float lat = fpath.get(latOrder).getLabel().getFloat();
+						float lon = fpath.get(lngOrder).getLabel().getFloat();
+						if (!Float.isNaN(lat) && !Float.isNaN(lon))
+							geoMap.addPoint(new Coordinates(lat, lon), fpath);
+					}
+					try {
+						GeoavailabilityQuery geoQuery = new GeoavailabilityQuery(queryPolygon);
+						for (List<Path<Feature, String>> paths : geoMap.query(geoQuery).values())
+							resultPaths.addAll(paths);
+						logger.info(
+								"Number of paths in the geoavailability grid(" + geohash + ") - " + resultPaths.size());
+					} catch (Exception e) {
+						logger.log(Level.SEVERE, "Something went wrong while querying on the grid", e);
+					}
+				} else {
+					logger.log(Level.SEVERE, "Failed to identify the positions of spatial hint. No paths are returned");
+				}
+				return resultPaths;
+			}
+		}
+		return featurePaths;
+	}
+
+	/*
+	 * public List<Path<Feature, String>> query(String blockPath,
+	 * GeoavailabilityQuery geoQuery) throws IOException { try { logger.info(
+	 * "querying filesystem " + this.name + " for block path - " + blockPath);
+	 * List<Path<Feature, String>> featurePaths = new ArrayList<Path<Feature,
+	 * String>>(); if (this.featureList == null) { logger.log(Level.SEVERE,
+	 * "This method should not be called for blocks not having point feature data stored"
+	 * ); return featurePaths; } if (this.spatialHint == null) {
+	 * logger.log(Level.SEVERE, "No spatial hint present for the filesystem - "
+	 * + this.name); return featurePaths; } byte[] blockBytes =
+	 * Files.readAllBytes(Paths.get(blockPath)); Block block =
+	 * Serializer.deserialize(Block.class, blockBytes); String blockData = new
+	 * String(block.getData(), "UTF-8");
+	 * 
+	 * MetadataGraph temporaryGraph = new MetadataGraph();
+	 * 
+	 * int latOrder = -1; int longOrder = -1; for (String line :
+	 * blockData.split("\\r?\\n")) { try { String[] features = line.split(",");
+	 * Metadata metadata = new Metadata(); FeatureSet featureset = new
+	 * FeatureSet(); for (int i = 0; i < features.length; i++) { // first two
+	 * features are special reserved // attributes - hence i+2 Pair<String,
+	 * FeatureType> pair = this.featureList.get(i); if (latOrder == -1 &&
+	 * pair.a.equalsIgnoreCase(this.spatialHint.getLatitudeHint())) latOrder =
+	 * i; if (longOrder == -1 &&
+	 * pair.a.equalsIgnoreCase(this.spatialHint.getLongitudeHint())) longOrder =
+	 * i; if (pair.b == FeatureType.FLOAT) featureset.put(new Feature(pair.a,
+	 * Math.getFloat(features[i]))); if (pair.b == FeatureType.INT)
+	 * featureset.put(new Feature(pair.a, Math.getInteger(features[i]))); if
+	 * (pair.b == FeatureType.LONG) featureset.put(new Feature(pair.a,
+	 * Math.getLong(features[i]))); if (pair.b == FeatureType.DOUBLE)
+	 * featureset.put(new Feature(pair.a, Math.getDouble(features[i]))); if
+	 * (pair.b == FeatureType.STRING) featureset.put(new Feature(pair.a,
+	 * features[i])); } metadata.setAttributes(featureset); Path<Feature,
+	 * String> featurePath = createPath(blockPath, metadata);
+	 * temporaryGraph.addPath(featurePath); } catch (Exception e) {
+	 * logger.warning(e.getMessage()); } } logger.info(
+	 * "Built temporary metadata graph"); featurePaths = geoQuery.getQuery() !=
+	 * null ? temporaryGraph.evaluateQuery(geoQuery.getQuery()) :
+	 * temporaryGraph.getAllPaths(); if (geoQuery.getPolygon() != null) {
+	 * Polygon polygon = new Polygon(); for (Coordinates coords :
+	 * geoQuery.getPolygon()) { Point<Integer> point =
+	 * GeoHash.coordinatesToXY(coords); polygon.addPoint(point.X(), point.Y());
+	 * } int hashendIndex = blockPath.lastIndexOf(File.separator); String
+	 * blockHash = blockPath.substring(hashendIndex - this.geohashPrecision,
+	 * hashendIndex); logger.info("checking geohash " + blockHash +
+	 * " intersection with the polygon"); SpatialRange hashRange =
+	 * GeoHash.decodeHash(blockHash); Pair<Coordinates, Coordinates> pair =
+	 * hashRange.get2DCoordinates(); Point<Integer> upperLeft =
+	 * GeoHash.coordinatesToXY(pair.a); Point<Integer> lowerRight =
+	 * GeoHash.coordinatesToXY(pair.b); if (polygon.contains(new
+	 * Rectangle(upperLeft.X(), upperLeft.Y(), lowerRight.X() - upperLeft.X(),
+	 * lowerRight.Y() - upperLeft.Y()))) return featurePaths; else { if
+	 * (latOrder != -1 && longOrder != -1) { GeoavailabilityMap<Path<Feature,
+	 * String>> geoMap = new GeoavailabilityMap<Path<Feature, String>>(
+	 * blockHash, 18); for (Path<Feature, String> fpath : featurePaths) { float
+	 * lat = fpath.get(latOrder).getLabel().getFloat(); float lon =
+	 * fpath.get(longOrder).getLabel().getFloat(); if (!Float.isNaN(lat) &&
+	 * !Float.isNaN(lon)) geoMap.addPoint(new Coordinates(lat, lon), fpath); }
+	 * List<Path<Feature, String>> results = new ArrayList<Path<Feature,
+	 * String>>(); for (List<Path<Feature, String>> paths :
+	 * geoMap.query(geoQuery).values()) results.addAll(paths); logger.info(
+	 * "Number of paths in the considered block - " + results.size()); return
+	 * results; } } } logger.info("Number of paths in the considered block - " +
+	 * featurePaths.size()); return featurePaths; } catch
+	 * (SerializationException | IOException | BitmapException e) { throw new
+	 * IOException("Failed to query for the given block(" + blockPath + ") - " +
+	 * e.getMessage(), e.getCause()); } }
+	 */
 
 	public JSONArray getFeaturesJSON() {
 		return metadataGraph.getFeaturesJSON();

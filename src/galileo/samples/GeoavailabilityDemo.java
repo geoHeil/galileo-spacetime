@@ -25,23 +25,6 @@ software, even if advised of the possibility of such damage.
 
 package galileo.samples;
 
-import galileo.bmp.Bitmap;
-
-import galileo.bmp.BitmapVisualization;
-import galileo.bmp.GeoavailabilityGrid;
-import galileo.bmp.GeoavailabilityMap;
-import galileo.bmp.GeoavailabilityQuery;
-import galileo.bmp.QueryTransform;
-import galileo.dataset.Coordinates;
-import galileo.dataset.Metadata;
-import galileo.dataset.feature.Feature;
-import galileo.fs.GeospatialFileSystem;
-import galileo.graph.Path;
-import galileo.query.Expression;
-import galileo.query.Operation;
-import galileo.query.PayloadFilter;
-import galileo.query.Query;
-
 import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -50,6 +33,27 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import galileo.bmp.Bitmap;
+import galileo.bmp.BitmapVisualization;
+import galileo.bmp.GeoavailabilityGrid;
+import galileo.bmp.GeoavailabilityMap;
+import galileo.bmp.GeoavailabilityQuery;
+import galileo.bmp.QueryTransform;
+import galileo.comm.TemporalType;
+import galileo.config.SystemConfig;
+import galileo.dataset.Coordinates;
+import galileo.dataset.Metadata;
+import galileo.dataset.feature.Feature;
+import galileo.dht.NetworkConfig;
+import galileo.dht.NetworkInfo;
+import galileo.dht.StorageNode;
+import galileo.fs.GeospatialFileSystem;
+import galileo.graph.Path;
+import galileo.query.Expression;
+import galileo.query.Operation;
+import galileo.query.PayloadFilter;
+import galileo.query.Query;
+
 /**
  * Demonstrates the use of a {@link GeoavailabilityGrid} in determining whether
  * or not information is available in a particular region.
@@ -57,118 +61,113 @@ import java.util.Set;
  * @author malensek
  */
 public class GeoavailabilityDemo {
-    public static void main(String[] args)
-    throws Exception {
-        if (args.length < 1) {
-            System.out.println("Usage: GeoavailabilityDemo <NetCDF-File>");
-            return;
-        }
+	public static void main(String[] args) throws Exception {
+		if (args.length < 1) {
+			System.out.println("Usage: GeoavailabilityDemo <NetCDF-File>");
+			return;
+		}
 
-        String file = args[0];
-        System.out.println("Reading NetCDF file: " + file + "...");
-        Map<String, Metadata> metaMap = ConvertNetCDF.readFile(file);
+		String file = args[0];
+		System.out.println("Reading NetCDF file: " + file + "...");
+		Map<String, Metadata> metaMap = ConvertNetCDF.readFile(file);
 
-        /* Let's construct a Geo Grid for the 9x Geohash region with a precision
-         * of 20.  That's 2^20 total grid points. */
-        GeoavailabilityGrid gg = new GeoavailabilityGrid("9x", 20);
+		/*
+		 * Let's construct a Geo Grid for the 9x Geohash region with a precision
+		 * of 20. That's 2^20 total grid points.
+		 */
+		GeoavailabilityGrid gg = new GeoavailabilityGrid("9x", 20);
 
-        System.out.println("Adding points...");
-        for (String str : metaMap.keySet()) {
-            if (str.toLowerCase().substring(0, 2).equals("9x")) {
-                /* We found a sample for our particular region */
-                Coordinates coords
-                    = metaMap.get(str).getSpatialProperties().getCoordinates();
-                gg.addPoint(coords);
-            }
-        }
+		System.out.println("Adding points...");
+		for (String str : metaMap.keySet()) {
+			if (str.toLowerCase().substring(0, 2).equals("9x")) {
+				/* We found a sample for our particular region */
+				Coordinates coords = metaMap.get(str).getSpatialProperties().getCoordinates();
+				gg.addPoint(coords);
+			}
+		}
 
-        /* What does this grid look like? */
-        BufferedImage b
-            = BitmapVisualization.drawGeoavailabilityGrid(gg, Color.BLACK);
-        BitmapVisualization.imageToFile(b, "NetCDF-GeoavailabilityGrid.gif");
+		/* What does this grid look like? */
+		BufferedImage b = BitmapVisualization.drawGeoavailabilityGrid(gg, Color.BLACK);
+		BitmapVisualization.imageToFile(b, "NetCDF-GeoavailabilityGrid.gif");
 
-        List<Coordinates> poly = new ArrayList<>();
-        poly.add(new Coordinates(43.79f, -105.00f));
-        poly.add(new Coordinates(40.96f, -103.50f));
-        poly.add(new Coordinates(39.98f, -108.47f));
-        GeoavailabilityQuery gq = new GeoavailabilityQuery(poly);
+		List<Coordinates> poly = new ArrayList<>();
+		poly.add(new Coordinates(43.79f, -105.00f));
+		poly.add(new Coordinates(40.96f, -103.50f));
+		poly.add(new Coordinates(39.98f, -108.47f));
+		GeoavailabilityQuery gq = new GeoavailabilityQuery(poly);
 
-        /* Let's see what the polygon looks like too... */
-        Bitmap queryBitamp = QueryTransform.queryToGridBitmap(gq, gg);
-        BufferedImage polyImage
-            = BitmapVisualization.drawBitmap(queryBitamp,
-                    gg.getWidth(), gg.getHeight(), Color.RED);
-        BitmapVisualization.imageToFile(
-                polyImage, "NetCDF-GeoavailabilityQuery.gif");
+		/* Let's see what the polygon looks like too... */
+		Bitmap queryBitamp = QueryTransform.queryToGridBitmap(gq, gg);
+		BufferedImage polyImage = BitmapVisualization.drawBitmap(queryBitamp, gg.getWidth(), gg.getHeight(), Color.RED);
+		BitmapVisualization.imageToFile(polyImage, "NetCDF-GeoavailabilityQuery.gif");
 
-        /* Does this polygon overlap the grid? */
-        boolean intersects = gg.intersects(gq);
-        System.out.println("Polygon intersects the grid: " + intersects);
+		/* Does this polygon overlap the grid? */
+		boolean intersects = gg.intersects(gq);
+		System.out.println("Polygon intersects the grid: " + intersects);
 
-        /* Alternatively, a little 'polygon' that won't intersect: */
-        poly = new ArrayList<>();
-        poly.add(new Coordinates(43.79f, -105.39f));
-        gq = new GeoavailabilityQuery(poly);
+		/* Alternatively, a little 'polygon' that won't intersect: */
+		poly = new ArrayList<>();
+		poly.add(new Coordinates(43.79f, -105.39f));
+		gq = new GeoavailabilityQuery(poly);
 
-        intersects = gg.intersects(gq);
-        System.out.println("Polygon intersects the grid: " + intersects);
+		intersects = gg.intersects(gq);
+		System.out.println("Polygon intersects the grid: " + intersects);
 
-        /* GeoavailabilityMap tests */
-        GeoavailabilityMap<String> gm
-            = new GeoavailabilityMap<>("9x", 20);
+		/* GeoavailabilityMap tests */
+		GeoavailabilityMap<String> gm = new GeoavailabilityMap<>("9x", 20);
+		NetworkInfo network = NetworkConfig.readNetworkDescription(SystemConfig.getNetworkConfDir());
+		GeospatialFileSystem gfs = new GeospatialFileSystem(new StorageNode(), "/tmp/galileo", "samples", 4, 0,
+				TemporalType.DAY_OF_MONTH.getType(), network, null, null, false);
 
-        GeospatialFileSystem gfs = new GeospatialFileSystem("/tmp/galileo", "samples");
+		System.out.println("Adding points to Map");
+		for (String str : metaMap.keySet()) {
+			if (str.toLowerCase().substring(0, 2).equals("9x")) {
+				/* We found a sample for our particular region */
+				Metadata meta = metaMap.get(str);
+				Coordinates coords = meta.getSpatialProperties().getCoordinates();
+				gm.addPoint(coords, meta.getName());
 
-        System.out.println("Adding points to Map");
-        for (String str : metaMap.keySet()) {
-            if (str.toLowerCase().substring(0, 2).equals("9x")) {
-                /* We found a sample for our particular region */
-                Metadata meta = metaMap.get(str);
-                Coordinates coords
-                    = meta.getSpatialProperties().getCoordinates();
-                gm.addPoint(coords, meta.getName());
+				gfs.storeMetadata(meta, meta.getName());
+			}
+		}
 
-                gfs.storeMetadata(meta, meta.getName());
-            }
-        }
+		poly = new ArrayList<>();
+		poly.add(new Coordinates(43.79f, -105.00f));
+		poly.add(new Coordinates(40.96f, -103.50f));
+		poly.add(new Coordinates(39.98f, -108.47f));
+		gq = new GeoavailabilityQuery(poly);
 
-        poly = new ArrayList<>();
-        poly.add(new Coordinates(43.79f, -105.00f));
-        poly.add(new Coordinates(40.96f, -103.50f));
-        poly.add(new Coordinates(39.98f, -108.47f));
-        gq = new GeoavailabilityQuery(poly);
+		System.out.println("Intersecting points:");
+		Map<Integer, List<String>> results = gm.query(gq);
+		Set<String> files = new HashSet<>();
+		for (int i : results.keySet()) {
+			System.out.print(i + ", ");
+			for (String s : results.get(i)) {
+				System.out.print(s + " ");
+				files.add(s);
+			}
+			System.out.println();
+		}
 
-        System.out.println("Intersecting points:");
-        Map<Integer, List<String>> results = gm.query(gq);
-        Set<String> files = new HashSet<>();
-        for (int i : results.keySet()) {
-            System.out.print(i + ", ");
-            for (String s : results.get(i)) {
-                System.out.print(s + " ");
-                files.add(s);
-            }
-            System.out.println();
-        }
+		/*
+		 * Homework: see if the total points in the result set matches the
+		 * number of points in the outputted gifs
+		 */
+		System.out.println();
+		System.out.println("Total points: " + results.keySet().size());
 
-        /* Homework: see if the total points in the result set matches the
-         * number of points in the outputted gifs */
-        System.out.println();
-        System.out.println("Total points: " + results.keySet().size());
+		Query q = new Query();
+		q.addOperation(new Operation(new Expression(">", new Feature("temperature_surface", 270.0f))));
+		System.out.println("Query: " + q);
 
-        Query q = new Query();
-        q.addOperation(new Operation(new Expression(">",
-                        new Feature("temperature_surface", 270.0f))));
-        System.out.println("Query: " + q);
+		PayloadFilter<String> pf = new PayloadFilter<>(false, files);
 
-        PayloadFilter<String> pf = new PayloadFilter<>(false, files);
+		List<Path<Feature, String>> result = gfs.getMetadataGraph().evaluateQuery(q, pf);
+		/* Alternatively, get a Metadata graph back: */
+		// MetadataGraph mdg = gfs.getMetadataGraph().evaluateQuery(q, pf);
+		/* See the graph: */
+		// System.out.println(mdg);
 
-        List<Path<Feature, String>> result
-            = gfs.getMetadataGraph().evaluateQuery(q, pf);
-        /* Alternatively, get a Metadata graph back: */
-        //MetadataGraph mdg = gfs.getMetadataGraph().evaluateQuery(q, pf);
-        /* See the graph: */
-        //System.out.println(mdg);
-
-        System.out.println("Number of filtered results: " + result.size());
-    }
+		System.out.println("Number of filtered results: " + result.size());
+	}
 }

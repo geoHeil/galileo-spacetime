@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.logging.Logger;
 
+import galileo.comm.TemporalType;
 import galileo.dataset.Coordinates;
 import galileo.dataset.Metadata;
 import galileo.dataset.SpatialProperties;
@@ -53,7 +54,7 @@ public class TemporalHierarchyPartitioner extends Partitioner<Metadata> {
 				"d7", "dd", "de", "dh", "dj", "dk", "dm", "dn", "dp", "dq", "dr", "ds", "dt", "dw", "dx", "dz", "f0",
 				"f1", "f2", "f3", "f4", "f6", "f8", "f9", "fb", "fc", "fd", "ff" };
 
-		groupHash = new TemporalHash(temporalHashType);
+		groupHash = new TemporalHash(TemporalType.fromType(temporalHashType));
 		groupHashRing = new BalancedHashRing<>(groupHash);
 		groupPositions = new HashMap<>();
 		nodeHash = new ConstrainedGeohash(geohashes);

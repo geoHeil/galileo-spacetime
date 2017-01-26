@@ -26,43 +26,24 @@ software, even if advised of the possibility of such damage.
 package galileo.dht;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 /**
- * Records network group information.  Groups can contain arbitrary subgroups,
- * and, of course, a number of nodes.
+ * Records network group information.  Groups can contain a number of nodes.
  *
- * @author malensek, jkachika
+ * @author malensek, kachikaran
  */
 public class GroupInfo {
 
     private String name;
 
     List<NodeInfo> nodes;
-    List<GroupInfo> groups;
-    Set<String> geohashes;
 
     public GroupInfo(String name) {
         this.name = name;
         this.nodes = new ArrayList<>();
-        this.groups = new ArrayList<>();
-        this.geohashes = new HashSet<String>();
     }
     
-    public void addGeoHash(String geoHash){
-    	this.geohashes.add(geoHash);
-    }
-    
-    public Set<String> getGeoHashes(){
-    	return new HashSet<String>(this.geohashes);
-    }
-    
-    public boolean hasGeoHash(String geohash){
-    	return this.geohashes.contains(geohash);
-    }
-
     public void addNode(NodeInfo node) {
         nodes.add(node);
     }
@@ -71,19 +52,8 @@ public class GroupInfo {
         return nodes;
     }
 
-    public void addGroup(GroupInfo group) {
-        groups.add(group);
-    }
-
-    public List<GroupInfo> getGroups() {
-        return groups;
-    }
-
     public List<NodeInfo> getAllNodes() {
         List<NodeInfo> nodeList = new ArrayList<>();
-        for (GroupInfo group : groups) {
-            nodeList.addAll(group.getAllNodes());
-        }
         nodeList.addAll(nodes);
         return nodeList;
     }
@@ -95,9 +65,6 @@ public class GroupInfo {
     @Override
     public String toString() {
         String str = "Group: " + name + System.lineSeparator();
-        for (GroupInfo group : groups) {
-            str += "    " + group + System.lineSeparator();
-        }
         for (NodeInfo node : nodes) {
             str += "    " + node + System.lineSeparator();
         }

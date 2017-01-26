@@ -25,17 +25,16 @@ software, even if advised of the possibility of such damage.
 
 package galileo.query;
 
-import galileo.serialization.ByteSerializable;
-
-import galileo.serialization.SerializationException;
-import galileo.serialization.SerializationInputStream;
-import galileo.serialization.SerializationOutputStream;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import galileo.serialization.ByteSerializable;
+import galileo.serialization.SerializationException;
+import galileo.serialization.SerializationInputStream;
+import galileo.serialization.SerializationOutputStream;
 
 /**
  * Encapsulates a query operation.  This involves an operand, and multiple
@@ -50,12 +49,33 @@ public class Operation implements ByteSerializable {
         = new HashMap<>();
 
     private List<Expression> expressions = new ArrayList<>();
-
+    
     public Operation(Expression... expressions) {
+        addExpressions(expressions);
+    }
+    
+    public Operation(List<Expression> expressions) {
         addExpressions(expressions);
     }
 
     public void addExpressions(Expression... expressions) {
+        for (Expression expression : expressions) {
+            this.expressions.add(expression);
+
+            String operand = expression.getOperand();
+
+            List<Expression> list = expressionMap.get(operand);
+            if (list == null) {
+                List<Expression> newList = new ArrayList<>();
+                expressionMap.put(operand, newList);
+                list = newList;
+            }
+
+            list.add(expression);
+        }
+    }
+    
+    public void addExpressions(List<Expression> expressions) {
         for (Expression expression : expressions) {
             this.expressions.add(expression);
 
