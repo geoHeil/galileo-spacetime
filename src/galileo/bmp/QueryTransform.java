@@ -61,12 +61,16 @@ public class QueryTransform {
 
 		Area polygonArea = new Area(p);
 		Area gridArea = new Area(new Rectangle(0, 0, grid.getWidth(), grid.getHeight()));
-		// compute the intersection region and use that region as the polygon to
-		// build the query bitmap
+		/*
+		 * compute the intersection region and use that region as the polygon to
+		 * build the query bitmap
+		 */
 		polygonArea.intersect(gridArea);
 
-		/* Determine the minimum bounding rectangle (MBR) of the polygon. */
-		// Rectangle boundingBox = p.getBounds();
+		/*
+		 * Determine the minimum bounding rectangle (MBR) of the polygon.
+		 * Rectangle boundingBox = p.getBounds();
+		 */
 		/*
 		 * Ignoring the orignial polygon and treating the geometry outline of
 		 * the intersecting region between the original polygon and the grid as
@@ -78,10 +82,11 @@ public class QueryTransform {
 		int w = (int) boundingBox.getWidth();
 		int h = (int) boundingBox.getHeight();
 
-		int shift = (x > 0) ? x % 64 : 0; // if bounding box starts with
-											// negative x, we will map it on the
-											// grid starting at 0, so shift is
-											// not needed.
+		/*
+		 * if bounding box starts with negative x, we will map it on the grid
+		 * starting at 0, so shift is not needed.
+		 */
+		int shift = (x > 0) ? x % 64 : 0;
 		w = w + shift;
 		p = new Polygon();
 		for (Coordinates coords : poly) {
@@ -115,13 +120,6 @@ public class QueryTransform {
 
 		g.fillPolygon(p);
 		g.dispose();
-
-		/*try {
-			BitmapVisualization.imageToFile(img, "RawQuery.png");
-		} catch (IOException e) {
-			System.out.println("failed to save the raw query image");
-			e.printStackTrace();
-		}*/
 
 		/* Convert the bytes into a Bitmap representation */
 		/* Get the raw image data, in bytes */

@@ -46,6 +46,7 @@ public abstract class FileSystem implements PhysicalGraph {
     private static final Logger logger = Logger.getLogger("galileo");
 
     public static final String BLOCK_EXTENSION = ".gblock";
+    public static final String METADATA_EXTENSION = ".metadata";
 
     protected String name;
     protected File storageDirectory;

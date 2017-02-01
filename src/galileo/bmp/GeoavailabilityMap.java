@@ -43,72 +43,88 @@ import java.util.Map;
  */
 public class GeoavailabilityMap<T> {
 
-    private GeoavailabilityGrid grid;
-    private Map<Integer, List<T>> points;
+	private GeoavailabilityGrid grid;
+	private Map<Integer, List<T>> points;
 
-    public GeoavailabilityMap(String baseGeohash, int precision) {
-        grid = new GeoavailabilityGrid(baseGeohash, precision);
-        points = new HashMap<>();
-    }
+	public GeoavailabilityMap(String baseGeohash, int precision) {
+		grid = new GeoavailabilityGrid(baseGeohash, precision);
+		points = new HashMap<>();
+	}
+	
+	public GeoavailabilityMap(GeoavailabilityGrid grid){
+		this.grid = new GeoavailabilityGrid(grid);
+		this.points = new HashMap<>();
+	}
 
-    /**
-     * Adds a new point to this GeoavailabilityMap, and associates it with a
-     * data point.
-     *
-     * @param coords The location (coordinates in lat, lon) to add.
-     * @param data Data point to associate with the location.
-     *
-     * @return true if the point could be added to map, false otherwise (for
-     * example, if the point falls outside the purview of the grid)
-     */
-    public boolean addPoint(Coordinates coords, T data) {
-        if (grid.addPoint(coords) == false) {
-            return false;
-        }
+	/**
+	 * Adds a new point to this GeoavailabilityMap, and associates it with a
+	 * data point.
+	 *
+	 * @param coords
+	 *            The location (coordinates in lat, lon) to add.
+	 * @param data
+	 *            Data point to associate with the location.
+	 *
+	 * @return true if the point could be added to map, false otherwise (for
+	 *         example, if the point falls outside the purview of the grid)
+	 */
+	public boolean addPoint(Coordinates coords, T data) {
+		if (grid.addPoint(coords) == false) {
+			return false;
+		}
 
-        Point<Integer> gridPoint = grid.coordinatesToXY(coords);
-        int index = grid.XYtoIndex(gridPoint.X(), gridPoint.Y());
+		Point<Integer> gridPoint = grid.coordinatesToXY(coords);
+		int index = grid.XYtoIndex(gridPoint.X(), gridPoint.Y());
 
-        List<T> dataList = points.get(index);
-        if (dataList == null) {
-            dataList = new ArrayList<>();
-            points.put(index, dataList);
-        }
+		List<T> dataList = points.get(index);
+		if (dataList == null) {
+			dataList = new ArrayList<>();
+			points.put(index, dataList);
+		}
 
-        dataList.add(data);
-        return true;
-    }
+		dataList.add(data);
+		return true;
+	}
 
-    /**
-     * Retrieves the {@link SpatialRange} represented by a grid index point.
-     */
-    public SpatialRange indexToSpatialRange(int index) {
-        return grid.indexToSpatialRange(index);
-    }
+	/**
+	 * Retrieves the {@link SpatialRange} represented by a grid index point.
+	 */
+	public SpatialRange indexToSpatialRange(int index) {
+		return grid.indexToSpatialRange(index);
+	}
 
-    /**
-     * Queries the GeoavailabilityGrid, returning the grid indices that contain
-     * matching points, with lists of their associated data points.
-     *
-     * @param query GeoavailabilityQuery to evaluate
-     *
-     * @return results, as a Map of indices to arrays of data points.
-     */
-    public Map<Integer, List<T>> query(GeoavailabilityQuery query)
-    throws BitmapException {
-        Map<Integer, List<T>> results = new HashMap<>();
-        int[] indices = grid.query(query);
-        
-        if(null != indices){
-		    for (int i : indices) {
-		        results.put(i, points.get(i));
-		    }
-        }
+	/**
+	 * Queries the GeoavailabilityGrid, returning the grid indices that contain
+	 * matching points, with lists of their associated data points.
+	 *
+	 * @param query
+	 *            GeoavailabilityQuery to evaluate
+	 *
+	 * @return results, as a Map of indices to arrays of data points.
+	 */
+	public Map<Integer, List<T>> query(GeoavailabilityQuery query) throws BitmapException {
+		Map<Integer, List<T>> results = new HashMap<>();
+		int[] indices = grid.query(query);
 
-        return results;
-    }
-    
-    public GeoavailabilityGrid getGrid(){
-    	return this.grid;
-    }
+		if (null != indices)
+			for (int i : indices)
+				results.put(i, points.get(i));
+
+		return results;
+	}
+
+	public Map<Integer, List<T>> query(Bitmap queryBitmap) throws BitmapException {
+		Map<Integer, List<T>> results = new HashMap<>();
+		int[] indices = grid.query(queryBitmap);
+
+		if (null != indices)
+			for (int i : indices)
+				results.put(i, points.get(i));
+
+		return results;
+	}
+
+	public GeoavailabilityGrid getGrid() {
+		return this.grid;
+	}
 }

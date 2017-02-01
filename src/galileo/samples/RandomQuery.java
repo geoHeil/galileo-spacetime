@@ -174,22 +174,7 @@ public class RandomQuery implements MessageListener, Runnable {
 		System.out.println(clients + "    " + resp.getLastResult());
 		try {
 			QueryResponse response = (QueryResponse) wrapper.unwrap(message);
-			System.out.println(response.getResults().size() + " results received");
-
-			List<List<String>> results = response.getResults();
-			int counter = 0;
-			for (List<String> path  : results) {
-				System.out.println("First 5 results");
-				int limit = 5;
-				if (results.size() < 5) {
-					limit = results.size();
-				}
-				counter++;
-				System.out.println(path);
-				if (counter == limit) {
-					break;
-				}
-			}
+			System.out.println(response.getJSONResults().toString());
 		} catch (Exception e) {
 			e.printStackTrace();
 		}

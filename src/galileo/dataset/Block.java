@@ -71,14 +71,20 @@ public class Block implements ByteSerializable {
 	@Deserialize
 	public Block(SerializationInputStream in) throws IOException, SerializationException {
 		this.filesystem = in.readString();
-		this.metadata = new Metadata(in);
-		this.data = in.readField();
+		if(in.readBoolean())
+        	this.metadata = new Metadata(in);
+        if(in.readBoolean())
+        	this.data = in.readField();
 	}
 
 	@Override
 	public void serialize(SerializationOutputStream out) throws IOException {
 		out.writeString(filesystem);
-		out.writeSerializable(metadata);
-		out.writeField(data);
+		out.writeBoolean(this.metadata != null);
+		if (this.metadata != null)
+			out.writeSerializable(metadata);
+		out.writeBoolean(this.data != null);
+		if(this.data != null)
+			out.writeField(this.data);
 	}
 }

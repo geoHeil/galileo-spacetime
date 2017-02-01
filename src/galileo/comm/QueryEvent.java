@@ -48,7 +48,6 @@ import galileo.serialization.SerializationOutputStream;
 public class QueryEvent implements Event {
 	private String id;
 	private String fsName;
-	private boolean interactive;
 	private Query featureQuery;
 	private Query metadataQuery;
 	private List<Coordinates> polygon;
@@ -97,10 +96,6 @@ public class QueryEvent implements Event {
 		if (polygon == null)
 			throw new IllegalArgumentException("Spatial coordinates cannot be null");
 		this.polygon = polygon;
-	}
-
-	public void makeInteractive() {
-		this.interactive = true;
 	}
 
 	public void setTime(String time) {
@@ -155,10 +150,6 @@ public class QueryEvent implements Event {
 		if (this.polygon == null)
 			return null;
 		return Collections.unmodifiableList(this.polygon);
-	}
-
-	public boolean isInteractive() {
-		return this.interactive;
 	}
 
 	public boolean isSpatial() {
@@ -220,7 +211,6 @@ public class QueryEvent implements Event {
 		boolean hasMetadataQuery = in.readBoolean();
 		if (hasMetadataQuery)
 			this.metadataQuery = new Query(in);
-		interactive = in.readBoolean();
 		dryRun = in.readBoolean();
 	}
 
@@ -240,7 +230,6 @@ public class QueryEvent implements Event {
 		out.writeBoolean(hasMetadataQuery());
 		if (hasMetadataQuery())
 			out.writeSerializable(this.metadataQuery);
-		out.writeBoolean(interactive);
 		out.writeBoolean(dryRun);
 	}
 }

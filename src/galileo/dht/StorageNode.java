@@ -46,12 +46,21 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import galileo.bmp.Bitmap;
+import galileo.bmp.GeoavailabilityGrid;
+import galileo.bmp.GeoavailabilityQuery;
+import galileo.bmp.QueryTransform;
+import galileo.comm.BlockRequest;
+import galileo.comm.BlockResponse;
 import galileo.comm.FilesystemAction;
 import galileo.comm.FilesystemEvent;
 import galileo.comm.FilesystemRequest;
@@ -71,7 +80,6 @@ import galileo.dataset.Metadata;
 import galileo.dataset.SpatialProperties;
 import galileo.dataset.SpatialRange;
 import galileo.dataset.TemporalProperties;
-import galileo.dataset.feature.Feature;
 import galileo.dht.hash.HashException;
 import galileo.dht.hash.HashTopologyException;
 import galileo.dht.hash.TemporalHash;
@@ -81,7 +89,6 @@ import galileo.event.EventHandler;
 import galileo.event.EventReactor;
 import galileo.fs.FileSystemException;
 import galileo.fs.GeospatialFileSystem;
-import galileo.graph.Path;
 import galileo.net.ClientConnectionPool;
 import galileo.net.MessageListener;
 import galileo.net.NetworkDestination;
@@ -89,6 +96,7 @@ import galileo.net.PortTester;
 import galileo.net.RequestListener;
 import galileo.net.ServerMessageRouter;
 import galileo.serialization.SerializationException;
+import galileo.util.GeoHash;
 import galileo.util.Version;
 
 /**
@@ -108,6 +116,7 @@ public class StorageNode implements RequestListener {
 	private int port;
 	private String rootDir;
 	private String resultsDir;
+	private int numCores;
 
 	private File pidFile;
 	private File fsFile;
@@ -150,6 +159,7 @@ public class StorageNode implements RequestListener {
 		if (pid != null) {
 			this.pidFile = new File(pid);
 		}
+		this.numCores = Runtime.getRuntime().availableProcessors();
 		this.requestHandlers = new CopyOnWriteArrayList<ClientRequestHandler>();
 	}
 
@@ -349,6 +359,80 @@ public class StorageNode implements RequestListener {
 			logger.log(Level.SEVERE, "Requested file system(" + fsName + ") not found. Ignoring the block.");
 		}
 	}
+	
+	
+	private class ParallelReader implements Runnable {
+		private Block block;
+		private GeospatialFileSystem gfs;
+		private String blockPath;
+		
+		public ParallelReader(GeospatialFileSystem gfs, String blockPath){
+			this.gfs = gfs;
+			this.blockPath = blockPath;
+		}
+		
+		public Block getBlock(){
+			return this.block;
+		}
+		
+		@Override
+		public void run(){
+			try {
+				this.block = gfs.retrieveBlock(blockPath);
+				if(blockPath.startsWith(resultsDir))
+					new File(blockPath).delete();
+			} catch (IOException | SerializationException e) {
+				logger.log(Level.SEVERE, "Failed to retrieve the block", e);
+			}
+		}
+	}
+	
+
+	@EventHandler
+	public void handleBlockRequest(BlockRequest blockRequest, EventContext context) {
+		String fsName = blockRequest.getFilesystem();
+		GeospatialFileSystem fs = fsMap.get(fsName);
+		List<Block> blocks = new ArrayList<Block>();
+		if (fs != null) {
+			logger.log(Level.FINE, "Retrieving blocks " + blockRequest.getFilePaths() + " from filesystem " + fsName);
+			try {
+				List<String> blockPaths = blockRequest.getFilePaths();
+				if(blockPaths.size() > 1){
+					ExecutorService executor = Executors.newFixedThreadPool(Math.min(blockPaths.size(), 2 * numCores));
+					List<ParallelReader> readers = new ArrayList<>();
+					for(String blockPath : blockPaths){
+						ParallelReader pr = new ParallelReader(fs, blockPath);
+						readers.add(pr);
+						executor.execute(pr);
+					}
+					executor.shutdown();
+					executor.awaitTermination(10, TimeUnit.MINUTES);
+					for(ParallelReader reader : readers)
+						if(reader.getBlock() != null)
+							blocks.add(reader.getBlock());
+				} else {
+					ParallelReader pr = new ParallelReader(fs, blockPaths.get(0));
+					pr.run();
+					blocks.add(pr.getBlock());
+				}
+				context.sendReply(new BlockResponse(blocks.toArray(new Block[blocks.size()])));
+			} catch (IOException | InterruptedException e) {
+				logger.log(Level.SEVERE, "Something went wrong while retrieving the block.", e);
+				try {
+					context.sendReply(new BlockResponse(new Block[]{}));
+				} catch (IOException e1) {
+					logger.log(Level.SEVERE, "Failed to send response to the original client", e1);
+				}
+			}
+		} else {
+			logger.log(Level.SEVERE, "Requested file system(" + fsName + ") not found. Returning empty content.");
+			try {
+				context.sendReply(new BlockResponse(new Block[]{}));
+			} catch (IOException e) {
+				logger.log(Level.SEVERE, "Failed to send response to the original client", e);
+			}
+		}
+	}
 
 	/**
 	 * Handles a meta request that seeks information regarding the galileo
@@ -496,10 +580,8 @@ public class StorageNode implements RequestListener {
 		logger.log(Level.INFO, "Metadata query request: {0}", metadataQueryString);
 		String queryId = String.valueOf(System.currentTimeMillis());
 		GeospatialFileSystem gfs = this.fsMap.get(request.getFilesystemName());
-		QueryResponse response = request.isInteractive()
-				? new QueryResponse(queryId, gfs.getFeaturesList(), new ArrayList<List<String>>())
-				: new QueryResponse(queryId, new JSONObject());
 		if (gfs != null) {
+			QueryResponse response = new QueryResponse(queryId, gfs.getFeaturesRepresentation(), new JSONObject());
 			Metadata data = new Metadata();
 			if (request.isTemporal()) {
 				String[] timeSplit = request.getTime().split("-");
@@ -539,8 +621,6 @@ public class StorageNode implements RequestListener {
 					qEvent.enableDryRun();
 					response.setDryRun(true);
 				}
-				if (request.isInteractive())
-					qEvent.makeInteractive();
 				if (request.isSpatial())
 					qEvent.setPolygon(request.getPolygon());
 				if (request.isTemporal())
@@ -572,6 +652,7 @@ public class StorageNode implements RequestListener {
 			}
 		} else {
 			try {
+				QueryResponse response = new QueryResponse(queryId, new JSONArray(), new JSONObject());
 				context.sendReply(response);
 			} catch (IOException ioe) {
 				logger.log(Level.SEVERE, "Failed to send response back to original client", ioe);
@@ -579,8 +660,49 @@ public class StorageNode implements RequestListener {
 		}
 	}
 
-	private String getQueryResultFileName(String queryId, String fsName) {
-		return this.resultsDir + "/" + String.format("%s-%s", fsName, queryId) + ".json";
+	private String getResultFilePrefix(String queryId, String fsName, String blockIdentifier) {
+		return this.resultsDir + "/" + String.format("%s-%s-%s", fsName, queryId, blockIdentifier);
+	}
+
+	private class QueryProcessor implements Runnable {
+		private String blockPath;
+		private String pathPrefix;
+		private GeoavailabilityQuery geoQuery;
+		private GeoavailabilityGrid grid;
+		private GeospatialFileSystem gfs;
+		private Bitmap queryBitmap;
+		private List<String> resultPaths;
+		private long fileSize;
+
+		public QueryProcessor(GeospatialFileSystem gfs, String blockPath, GeoavailabilityQuery gQuery,
+				GeoavailabilityGrid grid, Bitmap queryBitmap, String pathPrefix) {
+			this.gfs = gfs;
+			this.blockPath = blockPath;
+			this.geoQuery = gQuery;
+			this.grid = grid;
+			this.queryBitmap = queryBitmap;
+			this.pathPrefix = pathPrefix;
+		}
+
+		@Override
+		public void run() {
+			try {
+				this.resultPaths = this.gfs.query(this.blockPath, this.geoQuery, this.grid, this.queryBitmap,
+						this.pathPrefix);
+				for (String resultPath : this.resultPaths)
+					this.fileSize += new File(resultPath).length();
+			} catch (IOException | InterruptedException e) {
+				logger.log(Level.SEVERE, "Something went wrong while querying the filesystem. No results obtained.");
+			}
+		}
+
+		public long getFileSize() {
+			return this.fileSize;
+		}
+
+		public List<String> getResultPaths() {
+			return this.resultPaths;
+		}
 	}
 
 	/**
@@ -588,13 +710,11 @@ public class StorageNode implements RequestListener {
 	 */
 	@EventHandler
 	public void handleQuery(QueryEvent event, EventContext context) {
-		long resultSize = 0;
 		long hostFileSize = 0;
 		long totalProcessingTime = 0;
 		long blocksProcessed = 0;
-		long minimumResultSize = 2;
-		List<List<String>> resultPaths = new ArrayList<List<String>>();
-		List<String> resultHeader = new ArrayList<String>();
+		int totalNumPaths = 0;
+		JSONArray header = new JSONArray();
 		JSONObject blocksJSON = new JSONObject();
 		JSONArray resultsJSON = new JSONArray();
 		long processingTime = System.currentTimeMillis();
@@ -604,10 +724,15 @@ public class StorageNode implements RequestListener {
 			String fsName = event.getFilesystemName();
 			GeospatialFileSystem fs = fsMap.get(fsName);
 			if (fs != null) {
-				resultHeader.addAll(fs.getFeaturesList());
+				header = fs.getFeaturesRepresentation();
 				Map<String, List<String>> blockMap = fs.listBlocks(event.getTime(), event.getPolygon(),
 						event.getMetadataQuery(), event.isDryRun());
 				if (event.isDryRun()) {
+					/*
+					 * TODO: Make result of dryRun resemble the format of that
+					 * of non-dry-run so that the end user can retrieve the
+					 * blocks from the block paths
+					 **/
 					JSONObject responseJSON = new JSONObject();
 					responseJSON.put("filesystem", event.getFilesystemName());
 					responseJSON.put("queryId", event.getQueryId());
@@ -615,78 +740,68 @@ public class StorageNode implements RequestListener {
 						blocksJSON.put(blockKey, new JSONArray(blockMap.get(blockKey)));
 					}
 					responseJSON.put("result", blocksJSON);
-					QueryResponse response = new QueryResponse(event.getQueryId(), responseJSON);
+					QueryResponse response = new QueryResponse(event.getQueryId(), header, responseJSON);
+					response.setDryRun(true);
 					context.sendReply(response);
 					return;
 				}
-				FileWriter resultFile = null;
-				try {
-					if (!event.isInteractive()) {
-						resultFile = new FileWriter(getQueryResultFileName(event.getQueryId(), fsName));
-						resultFile.append("[");
-						String header = fs.getFeaturesRepresentation().toString();
-						resultFile.append(header);
-						minimumResultSize += header.length();
-					}
-
-					List<Path<Feature, String>> qResults = new ArrayList<>();
-					for (String blockKey : blockMap.keySet()) {
-						List<String> blocks = blockMap.get(blockKey);
-						for (int i = 1; i <= blocks.size(); i++) {
-							String block = blocks.get(i - 1);
-							blocksProcessed++;
-							qResults.addAll(fs.query(block, event.getFeatureQuery()));
-							if (qResults.size() > GeospatialFileSystem.MAX_GRID_POINTS || i == blocks.size()) {
-								qResults = fs.query(blockKey, qResults, event.getPolygon());
-								resultSize += qResults.size();
-								if (event.isInteractive()) {
-									for (Path<Feature, String> path : qResults) {
-										List<String> pathValues = new ArrayList<String>();
-										for (Feature feature : path.getLabels())
-											pathValues.add(feature.getString());
-										resultPaths.add(pathValues);
-									}
-								} else {
-									for (Path<Feature, String> path : qResults) {
-										JSONArray jsonPath = new JSONArray();
-										for (Feature feature : path.getLabels())
-											jsonPath.put(feature.getString());
-										resultFile.append(",\n" + jsonPath.toString());
-									}
-								}
-								qResults = new ArrayList<>();
-							}
-
-						}
-					}
-					if (resultFile != null) {
-						resultFile.append("]");
-						resultFile.flush();
-						resultFile.close();
-						totalProcessingTime = System.currentTimeMillis() - processingTime;
-						long fileSize = new File(getQueryResultFileName(event.getQueryId(), fsName)).length();
-						if (fileSize > minimumResultSize) {
-							hostFileSize += fileSize;
-							// file size of minimumResultSize indicates empty
-							// list. Including only those files having results
-							JSONObject resultJSON = new JSONObject();
-							resultJSON.put("filePath", getQueryResultFileName(event.getQueryId(), fsName));
-							resultJSON.put("fileSize", fileSize);
-							resultJSON.put("hostName", this.canonicalHostname);
-							resultJSON.put("resultSize", resultSize);
-							resultJSON.put("processingTime", totalProcessingTime);
-							resultsJSON.put(resultJSON);
-						}
-					}
-				} finally {
-					try {
-						if (resultFile != null)
-							resultFile.close();
-					} catch (IOException ex) {
-						logger.log(Level.SEVERE, "Failed to close the results file - "
-								+ getQueryResultFileName(event.getQueryId(), fsName), ex);
+				JSONArray filePaths = new JSONArray();
+				int totalBlocks = 0;
+				for (String blockKey : blockMap.keySet()) {
+					List<String> blocks = blockMap.get(blockKey);
+					totalBlocks += blocks.size();
+					for(String block : blocks){
+						filePaths.put(block);
+						hostFileSize += new File(block).length();
 					}
 				}
+				if (totalBlocks > 0) {
+					if (event.getFeatureQuery() != null || event.getPolygon() != null) {
+						hostFileSize = 0;
+						filePaths = new JSONArray();
+						// maximum parallelism = 64
+						ExecutorService executor = Executors.newFixedThreadPool(Math.min(totalBlocks, 2 * numCores));
+						List<QueryProcessor> queryProcessors = new ArrayList<>();
+						GeoavailabilityQuery geoQuery = new GeoavailabilityQuery(event.getFeatureQuery(),
+								event.getPolygon());
+						for (String blockKey : blockMap.keySet()) {
+							GeoavailabilityGrid blockGrid = new GeoavailabilityGrid(blockKey,
+									GeoHash.MAX_PRECISION * 2 / 3);
+							Bitmap queryBitmap = null;
+							if (geoQuery.getPolygon() != null)
+								queryBitmap = QueryTransform.queryToGridBitmap(geoQuery, blockGrid);
+							List<String> blocks = blockMap.get(blockKey);
+							for (String blockPath : blocks) {
+								QueryProcessor qp = new QueryProcessor(fs, blockPath, geoQuery, blockGrid, queryBitmap,
+										getResultFilePrefix(event.getQueryId(), fsName, blockKey + blocksProcessed));
+								blocksProcessed++;
+								queryProcessors.add(qp);
+								executor.execute(qp);
+							}
+						}
+						executor.shutdown();
+						boolean status = executor.awaitTermination(10, TimeUnit.MINUTES);
+						if (!status)
+							logger.log(Level.WARNING, "Executor terminated because of the specified timeout=10minutes");
+						for (QueryProcessor qp : queryProcessors) {
+							if (qp.getFileSize() > 0) {
+								hostFileSize += qp.getFileSize();
+								for (String resultPath : qp.getResultPaths())
+									filePaths.put(resultPath);
+							}
+						}
+					} 
+				}
+				totalProcessingTime = System.currentTimeMillis() - processingTime;
+				totalNumPaths = filePaths.length();
+				JSONObject resultJSON = new JSONObject();
+				resultJSON.put("filePath", filePaths);
+				resultJSON.put("numPaths", totalNumPaths);
+				resultJSON.put("fileSize", hostFileSize);
+				resultJSON.put("hostName", this.canonicalHostname);
+				resultJSON.put("hostPort", this.port);
+				resultJSON.put("processingTime", totalProcessingTime);
+				resultsJSON.put(resultJSON);
 			} else {
 				logger.log(Level.SEVERE, "Requested file system(" + fsName
 						+ ") not found. Ignoring the query and returning empty results.");
@@ -696,34 +811,30 @@ public class StorageNode implements RequestListener {
 					"Something went wrong while querying the filesystem. No results obtained. Sending blank list to the client. Issue details follow:",
 					e);
 		}
-		logger.info("Got " + resultSize + " results");
-		if (event.isInteractive()) {
-			QueryResponse response = new QueryResponse(event.getQueryId(), resultHeader, resultPaths);
-			response.setDryRun(event.isDryRun());
-			try {
-				context.sendReply(response);
-			} catch (IOException ioe) {
-				logger.log(Level.SEVERE, "Failed to send response back to ClientRequestHandler", ioe);
-			}
+
+		JSONObject responseJSON = new JSONObject();
+		responseJSON.put("filesystem", event.getFilesystemName());
+		responseJSON.put("queryId", event.getQueryId());
+		if (hostFileSize == 0) {
+			responseJSON.put("result", new JSONArray());
+			responseJSON.put("hostFileSize", new JSONObject());
+			responseJSON.put("totalFileSize", 0);
+			responseJSON.put("totalNumPaths", 0);
+			responseJSON.put("hostProcessingTime", new JSONObject());
 		} else {
-			JSONObject responseJSON = new JSONObject();
-			responseJSON.put("filesystem", event.getFilesystemName());
-			responseJSON.put("queryId", event.getQueryId());
 			responseJSON.put("result", resultsJSON);
-			responseJSON.put("hostResultSize", new JSONObject().put(this.canonicalHostname, resultSize));
-			responseJSON.put("totalResultSize", resultSize);
 			responseJSON.put("hostFileSize", new JSONObject().put(this.canonicalHostname, hostFileSize));
 			responseJSON.put("totalFileSize", hostFileSize);
+			responseJSON.put("totalNumPaths", totalNumPaths);
 			responseJSON.put("hostProcessingTime", new JSONObject().put(this.canonicalHostname, totalProcessingTime));
-			responseJSON.put("totalProcessingTime", totalProcessingTime);
-			responseJSON.put("totalBlocksProcessed", blocksProcessed);
-			QueryResponse response = new QueryResponse(event.getQueryId(), responseJSON);
-			response.setDryRun(event.isDryRun());
-			try {
-				context.sendReply(response);
-			} catch (IOException ioe) {
-				logger.log(Level.SEVERE, "Failed to send response back to ClientRequestHandler", ioe);
-			}
+		}
+		responseJSON.put("totalProcessingTime", totalProcessingTime);
+		responseJSON.put("totalBlocksProcessed", blocksProcessed);
+		QueryResponse response = new QueryResponse(event.getQueryId(), header, responseJSON);
+		try {
+			context.sendReply(response);
+		} catch (IOException ioe) {
+			logger.log(Level.SEVERE, "Failed to send response back to ClientRequestHandler", ioe);
 		}
 	}
 

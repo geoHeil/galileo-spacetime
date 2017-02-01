@@ -110,72 +110,57 @@ public class ClientRequestHandler implements MessageListener {
 					QueryResponse actualResponse = (QueryResponse) this.response;
 					actualResponse.setElapsedTime(elapsedTime);
 					QueryResponse eventResponse = (QueryResponse) event;
-					if (actualResponse.isInteractive() && eventResponse.isInteractive()) {
-						List<List<String>> actualResults = actualResponse.getResults();
-						List<List<String>> eventResults = eventResponse.getResults();
-						actualResults.addAll(eventResults);
+					JSONObject responseJSON = actualResponse.getJSONResults();
+					JSONObject eventJSON = eventResponse.getJSONResults();
+					if (responseJSON.length() == 0) {
+						for (String name : JSONObject.getNames(eventJSON))
+							responseJSON.put(name, eventJSON.get(name));
 					} else {
-						if (!actualResponse.isInteractive() && !eventResponse.isInteractive()) {
-							JSONObject responseJSON = actualResponse.getJSONResults();
-							JSONObject eventJSON = eventResponse.getJSONResults();
-							if (responseJSON.length() == 0) {
-								for (String name : JSONObject.getNames(eventJSON))
-									responseJSON.put(name, eventJSON.get(name));
-							} else {
-								if (responseJSON.has("queryId") && eventJSON.has("queryId") && responseJSON
-										.getString("queryId").equalsIgnoreCase(eventJSON.getString("queryId"))) {
-									if (actualResponse.isDryRun()) {
-										JSONObject actualResults = responseJSON.getJSONObject("result");
-										JSONObject eventResults = eventJSON.getJSONObject("result");
-										if (null != JSONObject.getNames(eventResults)) {
-											for (String name : JSONObject.getNames(eventResults)) {
-												if (actualResults.has(name)) {
-													JSONArray ar = actualResults.getJSONArray(name);
-													JSONArray er = eventResults.getJSONArray(name);
-													for (int i = 0; i < er.length(); i++) {
-														ar.put(er.get(i));
-													}
-												} else {
-													actualResults.put(name, eventResults.getJSONArray(name));
-												}
+						if (responseJSON.has("queryId") && eventJSON.has("queryId")
+								&& responseJSON.getString("queryId").equalsIgnoreCase(eventJSON.getString("queryId"))) {
+							if (actualResponse.isDryRun()) {
+								JSONObject actualResults = responseJSON.getJSONObject("result");
+								JSONObject eventResults = eventJSON.getJSONObject("result");
+								if (null != JSONObject.getNames(eventResults)) {
+									for (String name : JSONObject.getNames(eventResults)) {
+										if (actualResults.has(name)) {
+											JSONArray ar = actualResults.getJSONArray(name);
+											JSONArray er = eventResults.getJSONArray(name);
+											for (int i = 0; i < er.length(); i++) {
+												ar.put(er.get(i));
 											}
+										} else {
+											actualResults.put(name, eventResults.getJSONArray(name));
 										}
-									} else {
-										JSONArray actualResults = responseJSON.getJSONArray("result");
-										JSONArray eventResults = eventJSON.getJSONArray("result");
-										for (int i = 0; i < eventResults.length(); i++)
-											actualResults.put(eventResults.getJSONObject(i));
-									}
-									if (responseJSON.has("hostResultSize")) {
-										JSONObject aHostResultSize = responseJSON.getJSONObject("hostResultSize");
-										JSONObject eHostResultSize = eventJSON.getJSONObject("hostResultSize");
-
-										JSONObject aHostProcessingTime = responseJSON
-												.getJSONObject("hostProcessingTime");
-										JSONObject eHostProcessingTime = eventJSON.getJSONObject("hostProcessingTime");
-
-										JSONObject aHostFileSize = responseJSON.getJSONObject("hostFileSize");
-										JSONObject eHostFileSize = eventJSON.getJSONObject("hostFileSize");
-
-										for (String key : eHostResultSize.keySet())
-											aHostResultSize.put(key, eHostResultSize.getLong(key));
-										for (String key : eHostResultSize.keySet())
-											aHostProcessingTime.put(key, eHostProcessingTime.getLong(key));
-										for (String key : eHostResultSize.keySet())
-											aHostFileSize.put(key, eHostFileSize.getLong(key));
-
-										responseJSON.put("totalResultSize", responseJSON.getLong("totalResultSize")
-												+ eventJSON.getLong("totalResultSize"));
-										responseJSON.put("totalFileSize", responseJSON.getLong("totalFileSize")
-												+ eventJSON.getLong("totalFileSize"));
-										responseJSON.put("totalProcessingTime",
-												java.lang.Math.max(responseJSON.getLong("totalProcessingTime"),
-														eventJSON.getLong("totalProcessingTime")));
-										responseJSON.put("totalBlocksProcessed",
-												responseJSON.getLong("totalBlocksProcessed")
-														+ eventJSON.getLong("totalBlocksProcessed"));
 									}
 								}
+							} else {
+								JSONArray actualResults = responseJSON.getJSONArray("result");
+								JSONArray eventResults = eventJSON.getJSONArray("result");
+								for (int i = 0; i < eventResults.length(); i++)
+									actualResults.put(eventResults.getJSONObject(i));
+							}
+							if (responseJSON.has("hostProcessingTime")) {
+								JSONObject aHostProcessingTime = responseJSON.getJSONObject("hostProcessingTime");
+								JSONObject eHostProcessingTime = eventJSON.getJSONObject("hostProcessingTime");
+
+								JSONObject aHostFileSize = responseJSON.getJSONObject("hostFileSize");
+								JSONObject eHostFileSize = eventJSON.getJSONObject("hostFileSize");
+
+								for (String key : eHostProcessingTime.keySet())
+									aHostProcessingTime.put(key, eHostProcessingTime.getLong(key));
+								for (String key : eHostFileSize.keySet())
+									aHostFileSize.put(key, eHostFileSize.getLong(key));
+
+								responseJSON.put("totalFileSize",
+										responseJSON.getLong("totalFileSize") + eventJSON.getLong("totalFileSize"));
+								responseJSON.put("totalNumPaths",
+										responseJSON.getLong("totalNumPaths") + eventJSON.getLong("totalNumPaths"));
+								responseJSON.put("totalProcessingTime",
+										java.lang.Math.max(responseJSON.getLong("totalProcessingTime"),
+												eventJSON.getLong("totalProcessingTime")));
+								responseJSON.put("totalBlocksProcessed", responseJSON.getLong("totalBlocksProcessed")
+										+ eventJSON.getLong("totalBlocksProcessed"));
 							}
 						}
 					}
@@ -298,12 +283,12 @@ public class ClientRequestHandler implements MessageListener {
 					}
 				}
 			} catch (IOException | SerializationException e) {
-				logger.log(Level.INFO, "An exception occurred while processing the response message. Details follow:"
-						+ e.getMessage());
+				logger.log(Level.SEVERE, "An exception occurred while processing the response message. Details follow:"
+						+ e.getMessage(), e);
 			} catch (Exception e) {
 				logger.log(Level.SEVERE,
 						"An unknown exception occurred while processing the response message. Details follow:"
-								+ e.getMessage());
+								+ e.getMessage(), e);
 			}
 		}
 		this.requestListener.onRequestCompleted(this.response, clientContext, this);

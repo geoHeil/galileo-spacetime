@@ -38,15 +38,22 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import galileo.bmp.Bitmap;
+import galileo.bmp.BitmapException;
+import galileo.bmp.GeoavailabilityGrid;
 import galileo.bmp.GeoavailabilityMap;
 import galileo.bmp.GeoavailabilityQuery;
 import galileo.comm.TemporalType;
@@ -98,7 +105,8 @@ public class GeospatialFileSystem extends FileSystem {
 
 	private static final String DEFAULT_TIME_FORMAT = "yyyy" + File.separator + "M" + File.separator + "d";
 	private static final int DEFAULT_GEOHASH_PRECISION = 4;
-	public static final int MAX_GRID_POINTS = 100000;
+	private static final int MIN_GRID_POINTS = 5000;
+	private int numCores;
 
 	private static final String pathStore = "metadata.paths";
 
@@ -146,12 +154,14 @@ public class GeospatialFileSystem extends FileSystem {
 				this.featureList
 						.add(new Pair<String, FeatureType>(pair[0], FeatureType.fromInt(Integer.parseInt(pair[1]))));
 			}
+			this.featureList = Collections.unmodifiableList(this.featureList);
 		}
 		this.spatialHint = sHint;
 		if (this.featureList != null && this.spatialHint == null)
 			throw new IllegalArgumentException("Spatial hint is needed when feature list is provided");
 		this.storageRoot = storageDirectory;
 		this.temporalType = TemporalType.fromType(temporalType);
+		this.numCores = Runtime.getRuntime().availableProcessors();
 
 		if (nodesPerGroup <= 0)
 			this.network = networkInfo;
@@ -175,6 +185,11 @@ public class GeospatialFileSystem extends FileSystem {
 			}
 		}
 
+		/*
+		 * TODO: Ask end user about the partitioning scheme. chronospatial or
+		 * spatiotemporal. Accordingly, use TemporalHierarchyPartitioner or
+		 * SpatialHierarchyPartitioner
+		 **/
 		this.partitioner = new TemporalHierarchyPartitioner(sn, this.network, this.temporalType.getType());
 
 		this.timeFormat = System.getProperty("galileo.fs.GeospatialFileSystem.timeFormat", DEFAULT_TIME_FORMAT);
@@ -390,6 +405,7 @@ public class GeospatialFileSystem extends FileSystem {
 			name = meta.getName();
 		String blockDirPath = this.storageDirectory + File.separator + getStorageDirectory(block);
 		String blockPath = blockDirPath + File.separator + name + FileSystem.BLOCK_EXTENSION;
+		String metadataPath = blockDirPath + File.separator + name + FileSystem.METADATA_EXTENSION;
 
 		/* Ensure the storage directory is there. */
 		File blockDirectory = new File(blockDirPath);
@@ -399,10 +415,8 @@ public class GeospatialFileSystem extends FileSystem {
 			}
 		}
 
-		String blockString = new String(block.getData(), "UTF-8");
-
-		// Adding temporal and spatial features at the top to the existing
-		// attributes
+		// Adding temporal and spatial features at the top
+		// to the existing attributes
 		FeatureSet newfs = new FeatureSet();
 		String[] temporalFeature = time.split("-");
 		newfs.put(new Feature(TEMPORAL_YEAR_FEATURE, temporalFeature[0]));
@@ -414,34 +428,23 @@ public class GeospatialFileSystem extends FileSystem {
 			newfs.put(feature);
 		meta.setAttributes(newfs);
 
+		Serializer.persist(block.getMetadata(), metadataPath);
 		File gblock = new File(blockPath);
-		if (gblock.exists()) {
-			java.nio.file.Path gblockPath = Paths.get(blockPath);
-			byte[] blockData = Files.readAllBytes(gblockPath);
-			try {
-				Block existingBlock = Serializer.deserialize(Block.class, blockData);
-				StringBuffer dataBuffer = new StringBuffer();
-				dataBuffer.append(new String(existingBlock.getData(), "UTF-8"));
-				dataBuffer.append('\n');
-				dataBuffer.append(blockString);
-				// over-write the existing block with new blocks data. metadata
-				// is not changed.
-				block = new Block(existingBlock.getFilesystem(), existingBlock.getMetadata(),
-						dataBuffer.toString().getBytes("UTF-8"));
-			} catch (SerializationException e) {
-				throw new IOException("Failed to deserialize the existing block - " + e.getMessage(), e.getCause());
-			}
-		} else {
-			try {
-				storeMetadata(meta, blockPath);
-			} catch (Exception e) {
-				throw new FileSystemException("Error storing block: " + e.getClass().getCanonicalName(), e);
-			}
+		boolean newLine = gblock.exists();
+		if (!newLine)
+			storeMetadata(meta, blockPath);
+		/*
+		 * TODO: Add an attribute to this class asking for block update strategy
+		 * - whether to overwrite blocks, or append content. When it is append,
+		 * ask for any delimiter to separate the existing data.
+		 **/
+		try (FileOutputStream blockData = new FileOutputStream(blockPath, true)) {
+			if (newLine)
+				blockData.write("\n".getBytes("UTF-8"));
+			blockData.write(block.getData());
+		} catch (Exception e) {
+			throw new FileSystemException("Error storing block: " + e.getClass().getCanonicalName(), e);
 		}
-		FileOutputStream blockOutStream = new FileOutputStream(blockPath);
-		byte[] blockData = Serializer.serialize(block);
-		blockOutStream.write(blockData);
-		blockOutStream.close();
 
 		if (latestTime == null || latestTime.getEnd() < meta.getTemporalProperties().getEnd()) {
 			this.latestTime = meta.getTemporalProperties();
@@ -454,6 +457,16 @@ public class GeospatialFileSystem extends FileSystem {
 		}
 
 		return blockPath;
+	}
+
+	public Block retrieveBlock(String blockPath) throws IOException, SerializationException {
+		Metadata metadata = null;
+		byte[] blockBytes = Files.readAllBytes(Paths.get(blockPath));
+		String metadataPath = blockPath.replace(BLOCK_EXTENSION, METADATA_EXTENSION);
+		File metadataFile = new File(metadataPath);
+		if (metadataFile.exists())
+			metadata = Serializer.deserialize(Metadata.class, Files.readAllBytes(Paths.get(metadataPath)));
+		return new Block(this.name, metadata, blockBytes);
 	}
 
 	/**
@@ -793,184 +806,205 @@ public class GeospatialFileSystem extends FileSystem {
 		return metadataGraph.evaluateQuery(query);
 	}
 
-	public List<Path<Feature, String>> query(String blockPath, Query query) throws IOException {
-		List<Path<Feature, String>> featurePaths = new ArrayList<Path<Feature, String>>();
-		try {
-			logger.info("querying filesystem " + this.name + " for block path - " + blockPath);
-			if (this.featureList == null) {
-				logger.log(Level.SEVERE,
-						"This method should not be called for blocks not having point feature data stored");
-				return featurePaths;
-			}
-			if (this.spatialHint == null) {
-				logger.log(Level.SEVERE, "No spatial hint present for the filesystem - " + this.name);
-				return featurePaths;
-			}
-			byte[] blockBytes = Files.readAllBytes(Paths.get(blockPath));
-			Block block = Serializer.deserialize(Block.class, blockBytes);
-			String blockData = new String(block.getData(), "UTF-8");
-
-			MetadataGraph temporaryGraph = new MetadataGraph();
-			int splitLimit = this.featureList.size();
-			for (String line : blockData.split("\\r?\\n")) {
-				try {
-					String[] features = line.split(",", splitLimit);
-					Metadata metadata = new Metadata();
-					FeatureSet featureset = new FeatureSet();
-					for (int i = 0; i < features.length; i++) {
-						// first two features are special reserved
-						// attributes - hence i+2
-						Pair<String, FeatureType> pair = this.featureList.get(i);
-						if (pair.b == FeatureType.FLOAT)
-							featureset.put(new Feature(pair.a, Math.getFloat(features[i])));
-						if (pair.b == FeatureType.INT)
-							featureset.put(new Feature(pair.a, Math.getInteger(features[i])));
-						if (pair.b == FeatureType.LONG)
-							featureset.put(new Feature(pair.a, Math.getLong(features[i])));
-						if (pair.b == FeatureType.DOUBLE)
-							featureset.put(new Feature(pair.a, Math.getDouble(features[i])));
-						if (pair.b == FeatureType.STRING)
-							featureset.put(new Feature(pair.a, features[i]));
-					}
-					metadata.setAttributes(featureset);
-					Path<Feature, String> featurePath = createPath(blockPath, metadata);
-					temporaryGraph.addPath(featurePath);
-				} catch (Exception e) {
-					logger.warning(e.getMessage());
-				}
-			}
-			logger.info("Built temporary metadata graph");
-			featurePaths = query != null ? temporaryGraph.evaluateQuery(query) : temporaryGraph.getAllPaths();
-			logger.info("Number of paths in the considered block - " + featurePaths.size());
-		} catch (SerializationException | IOException e) {
-			logger.log(Level.SEVERE, "Failed to query for the given block(" + blockPath + ") - " + e.getMessage(), e);
-		}
-		return featurePaths;
+	private List<String[]> getFeaturePaths(String blockPath) throws IOException {
+		byte[] blockBytes = Files.readAllBytes(Paths.get(blockPath));
+		String blockData = new String(blockBytes, "UTF-8");
+		List<String[]> paths = new ArrayList<String[]>();
+		String[] lines = blockData.split("\\r?\\n");
+		int splitLimit = this.featureList.size();
+		for (String line : lines)
+			paths.add(line.split(",", splitLimit));
+		return paths;
 	}
 
-	public List<Path<Feature, String>> query(String geohash, List<Path<Feature, String>> featurePaths,
-			List<Coordinates> queryPolygon) throws IOException {
-		if (featurePaths != null && featurePaths.size() > 0 && queryPolygon != null) {
-			List<Path<Feature, String>> resultPaths = new ArrayList<Path<Feature, String>>();
-			Polygon polygon = new Polygon();
-			for (Coordinates coords : queryPolygon) {
-				Point<Integer> point = GeoHash.coordinatesToXY(coords);
-				polygon.addPoint(point.X(), point.Y());
-			}
-			logger.info("checking geohash " + geohash + " intersection with the polygon");
-			SpatialRange hashRange = GeoHash.decodeHash(geohash);
-			Pair<Coordinates, Coordinates> pair = hashRange.get2DCoordinates();
-			Point<Integer> upperLeft = GeoHash.coordinatesToXY(pair.a);
-			Point<Integer> lowerRight = GeoHash.coordinatesToXY(pair.b);
-			if (polygon.contains(new Rectangle(upperLeft.X(), upperLeft.Y(), lowerRight.X() - upperLeft.X(),
-					lowerRight.Y() - upperLeft.Y())))
-				return featurePaths;
-			else {
-				int latOrder = -1, lngOrder = -1, index = 0;
-				for (Pair<String, FeatureType> columnPair : this.featureList) {
-					if (columnPair.a.equalsIgnoreCase(this.spatialHint.getLatitudeHint()))
-						latOrder = index++;
-					else if (columnPair.a.equalsIgnoreCase(this.spatialHint.getLongitudeHint()))
-						lngOrder = index++;
-					else
-						index++;
+	private boolean isGridInsidePolygon(GeoavailabilityGrid grid, GeoavailabilityQuery geoQuery) {
+		Polygon polygon = new Polygon();
+		for (Coordinates coords : geoQuery.getPolygon()) {
+			Point<Integer> point = GeoHash.coordinatesToXY(coords);
+			polygon.addPoint(point.X(), point.Y());
+		}
+		logger.info("checking geohash " + grid.getBaseHash() + " intersection with the polygon");
+		SpatialRange hashRange = grid.getBaseRange();
+		Pair<Coordinates, Coordinates> pair = hashRange.get2DCoordinates();
+		Point<Integer> upperLeft = GeoHash.coordinatesToXY(pair.a);
+		Point<Integer> lowerRight = GeoHash.coordinatesToXY(pair.b);
+		if (polygon.contains(new Rectangle(upperLeft.X(), upperLeft.Y(), lowerRight.X() - upperLeft.X(),
+				lowerRight.Y() - upperLeft.Y())))
+			return true;
+		return false;
+	}
+
+	private class ParallelQueryProcessor implements Runnable {
+		private List<String[]> featurePaths;
+		private Query query;
+		private GeoavailabilityGrid grid;
+		private Bitmap queryBitmap;
+		private String storagePath;
+
+		public ParallelQueryProcessor(List<String[]> featurePaths, Query query, GeoavailabilityGrid grid,
+				Bitmap queryBitmap, String storagePath) {
+			this.featurePaths = featurePaths;
+			this.query = query;
+			this.grid = grid;
+			this.queryBitmap = queryBitmap;
+			this.storagePath = storagePath + BLOCK_EXTENSION;
+		}
+
+		@Override
+		public void run() {
+			try {
+				if (queryBitmap != null) {
+					int latOrder = -1, lngOrder = -1, index = 0;
+					for (Pair<String, FeatureType> columnPair : GeospatialFileSystem.this.featureList) {
+						if (columnPair.a.equalsIgnoreCase(GeospatialFileSystem.this.spatialHint.getLatitudeHint()))
+							latOrder = index++;
+						else if (columnPair.a
+								.equalsIgnoreCase(GeospatialFileSystem.this.spatialHint.getLongitudeHint()))
+							lngOrder = index++;
+						else
+							index++;
+					}
+
+					GeoavailabilityMap<String[]> geoMap = new GeoavailabilityMap<String[]>(grid);
+					Iterator<String[]> pathIterator = this.featurePaths.iterator();
+					while (pathIterator.hasNext()) {
+						String[] features = pathIterator.next();
+						float lat = Math.getFloat(features[latOrder]);
+						float lon = Math.getFloat(features[lngOrder]);
+						if (!Float.isNaN(lat) && !Float.isNaN(lon))
+							geoMap.addPoint(new Coordinates(lat, lon), features);
+						pathIterator.remove();
+					}
+					for (List<String[]> paths : geoMap.query(queryBitmap).values())
+						this.featurePaths.addAll(paths);
+				}
+				if (query != null && this.featurePaths.size() > 0) {
+					MetadataGraph temporaryGraph = new MetadataGraph();
+					Iterator<String[]> pathIterator = this.featurePaths.iterator();
+					while (pathIterator.hasNext()) {
+						String[] features = pathIterator.next();
+						try {
+							Metadata metadata = new Metadata();
+							FeatureSet featureset = new FeatureSet();
+							for (int i = 0; i < features.length; i++) {
+								Pair<String, FeatureType> pair = GeospatialFileSystem.this.featureList.get(i);
+								if (pair.b == FeatureType.FLOAT)
+									featureset.put(new Feature(pair.a, Math.getFloat(features[i])));
+								if (pair.b == FeatureType.INT)
+									featureset.put(new Feature(pair.a, Math.getInteger(features[i])));
+								if (pair.b == FeatureType.LONG)
+									featureset.put(new Feature(pair.a, Math.getLong(features[i])));
+								if (pair.b == FeatureType.DOUBLE)
+									featureset.put(new Feature(pair.a, Math.getDouble(features[i])));
+								if (pair.b == FeatureType.STRING)
+									featureset.put(new Feature(pair.a, features[i]));
+							}
+							metadata.setAttributes(featureset);
+							Path<Feature, String> featurePath = createPath("/nopath", metadata);
+							temporaryGraph.addPath(featurePath);
+						} catch (Exception e) {
+							logger.warning(e.getMessage());
+						}
+						pathIterator.remove();
+					}
+					List<Path<Feature, String>> evaluatedPaths = temporaryGraph.evaluateQuery(query);
+					for (Path<Feature, String> path : evaluatedPaths) {
+						String[] featureValues = new String[path.size()];
+						int index = 0;
+						for (Feature feature : path.getLabels())
+							featureValues[index++] = feature.getString();
+						this.featurePaths.add(featureValues);
+					}
 				}
 
-				if (latOrder != -1 && lngOrder != -1) {
-					GeoavailabilityMap<Path<Feature, String>> geoMap = new GeoavailabilityMap<Path<Feature, String>>(
-							geohash, GeoHash.MAX_PRECISION * 2 / 3);
-					for (Path<Feature, String> fpath : featurePaths) {
-						float lat = fpath.get(latOrder).getLabel().getFloat();
-						float lon = fpath.get(lngOrder).getLabel().getFloat();
-						if (!Float.isNaN(lat) && !Float.isNaN(lon))
-							geoMap.addPoint(new Coordinates(lat, lon), fpath);
-					}
-					try {
-						GeoavailabilityQuery geoQuery = new GeoavailabilityQuery(queryPolygon);
-						for (List<Path<Feature, String>> paths : geoMap.query(geoQuery).values())
-							resultPaths.addAll(paths);
-						logger.info(
-								"Number of paths in the geoavailability grid(" + geohash + ") - " + resultPaths.size());
-					} catch (Exception e) {
-						logger.log(Level.SEVERE, "Something went wrong while querying on the grid", e);
+				if (featurePaths.size() > 0) {
+					try (FileOutputStream fos = new FileOutputStream(this.storagePath)) {
+						Iterator<String[]> pathIterator = featurePaths.iterator();
+						while (pathIterator.hasNext()) {
+							String[] path = pathIterator.next();
+							StringBuffer pathSB = new StringBuffer();
+							for (int j = 0; j < path.length; j++) {
+								pathSB.append(path[j]);
+								if (j + 1 != path.length)
+									pathSB.append(",");
+							}
+							fos.write(pathSB.toString().getBytes("UTF-8"));
+							pathIterator.remove();
+							if (pathIterator.hasNext())
+								fos.write("\n".getBytes("UTF-8"));
+						}
 					}
 				} else {
-					logger.log(Level.SEVERE, "Failed to identify the positions of spatial hint. No paths are returned");
+					this.storagePath = null;
 				}
-				return resultPaths;
+			} catch (IOException | BitmapException e) {
+				logger.log(Level.SEVERE, "Something went wrong while querying the filesystem.", e);
+				this.storagePath = null;
 			}
 		}
-		return featurePaths;
+
+		public String getStoragePath() {
+			return this.storagePath;
+		}
+
 	}
 
-	/*
-	 * public List<Path<Feature, String>> query(String blockPath,
-	 * GeoavailabilityQuery geoQuery) throws IOException { try { logger.info(
-	 * "querying filesystem " + this.name + " for block path - " + blockPath);
-	 * List<Path<Feature, String>> featurePaths = new ArrayList<Path<Feature,
-	 * String>>(); if (this.featureList == null) { logger.log(Level.SEVERE,
-	 * "This method should not be called for blocks not having point feature data stored"
-	 * ); return featurePaths; } if (this.spatialHint == null) {
-	 * logger.log(Level.SEVERE, "No spatial hint present for the filesystem - "
-	 * + this.name); return featurePaths; } byte[] blockBytes =
-	 * Files.readAllBytes(Paths.get(blockPath)); Block block =
-	 * Serializer.deserialize(Block.class, blockBytes); String blockData = new
-	 * String(block.getData(), "UTF-8");
-	 * 
-	 * MetadataGraph temporaryGraph = new MetadataGraph();
-	 * 
-	 * int latOrder = -1; int longOrder = -1; for (String line :
-	 * blockData.split("\\r?\\n")) { try { String[] features = line.split(",");
-	 * Metadata metadata = new Metadata(); FeatureSet featureset = new
-	 * FeatureSet(); for (int i = 0; i < features.length; i++) { // first two
-	 * features are special reserved // attributes - hence i+2 Pair<String,
-	 * FeatureType> pair = this.featureList.get(i); if (latOrder == -1 &&
-	 * pair.a.equalsIgnoreCase(this.spatialHint.getLatitudeHint())) latOrder =
-	 * i; if (longOrder == -1 &&
-	 * pair.a.equalsIgnoreCase(this.spatialHint.getLongitudeHint())) longOrder =
-	 * i; if (pair.b == FeatureType.FLOAT) featureset.put(new Feature(pair.a,
-	 * Math.getFloat(features[i]))); if (pair.b == FeatureType.INT)
-	 * featureset.put(new Feature(pair.a, Math.getInteger(features[i]))); if
-	 * (pair.b == FeatureType.LONG) featureset.put(new Feature(pair.a,
-	 * Math.getLong(features[i]))); if (pair.b == FeatureType.DOUBLE)
-	 * featureset.put(new Feature(pair.a, Math.getDouble(features[i]))); if
-	 * (pair.b == FeatureType.STRING) featureset.put(new Feature(pair.a,
-	 * features[i])); } metadata.setAttributes(featureset); Path<Feature,
-	 * String> featurePath = createPath(blockPath, metadata);
-	 * temporaryGraph.addPath(featurePath); } catch (Exception e) {
-	 * logger.warning(e.getMessage()); } } logger.info(
-	 * "Built temporary metadata graph"); featurePaths = geoQuery.getQuery() !=
-	 * null ? temporaryGraph.evaluateQuery(geoQuery.getQuery()) :
-	 * temporaryGraph.getAllPaths(); if (geoQuery.getPolygon() != null) {
-	 * Polygon polygon = new Polygon(); for (Coordinates coords :
-	 * geoQuery.getPolygon()) { Point<Integer> point =
-	 * GeoHash.coordinatesToXY(coords); polygon.addPoint(point.X(), point.Y());
-	 * } int hashendIndex = blockPath.lastIndexOf(File.separator); String
-	 * blockHash = blockPath.substring(hashendIndex - this.geohashPrecision,
-	 * hashendIndex); logger.info("checking geohash " + blockHash +
-	 * " intersection with the polygon"); SpatialRange hashRange =
-	 * GeoHash.decodeHash(blockHash); Pair<Coordinates, Coordinates> pair =
-	 * hashRange.get2DCoordinates(); Point<Integer> upperLeft =
-	 * GeoHash.coordinatesToXY(pair.a); Point<Integer> lowerRight =
-	 * GeoHash.coordinatesToXY(pair.b); if (polygon.contains(new
-	 * Rectangle(upperLeft.X(), upperLeft.Y(), lowerRight.X() - upperLeft.X(),
-	 * lowerRight.Y() - upperLeft.Y()))) return featurePaths; else { if
-	 * (latOrder != -1 && longOrder != -1) { GeoavailabilityMap<Path<Feature,
-	 * String>> geoMap = new GeoavailabilityMap<Path<Feature, String>>(
-	 * blockHash, 18); for (Path<Feature, String> fpath : featurePaths) { float
-	 * lat = fpath.get(latOrder).getLabel().getFloat(); float lon =
-	 * fpath.get(longOrder).getLabel().getFloat(); if (!Float.isNaN(lat) &&
-	 * !Float.isNaN(lon)) geoMap.addPoint(new Coordinates(lat, lon), fpath); }
-	 * List<Path<Feature, String>> results = new ArrayList<Path<Feature,
-	 * String>>(); for (List<Path<Feature, String>> paths :
-	 * geoMap.query(geoQuery).values()) results.addAll(paths); logger.info(
-	 * "Number of paths in the considered block - " + results.size()); return
-	 * results; } } } logger.info("Number of paths in the considered block - " +
-	 * featurePaths.size()); return featurePaths; } catch
-	 * (SerializationException | IOException | BitmapException e) { throw new
-	 * IOException("Failed to query for the given block(" + blockPath + ") - " +
-	 * e.getMessage(), e.getCause()); } }
-	 */
+	public List<String> query(String blockPath, GeoavailabilityQuery geoQuery, GeoavailabilityGrid grid,
+			Bitmap queryBitmap, String pathPrefix) throws IOException, InterruptedException {
+		List<String> resultFiles = new ArrayList<>();
+		List<String[]> featurePaths = null;
+		boolean skipGridProcessing = false;
+		if (geoQuery.getPolygon() != null && geoQuery.getQuery() != null) {
+			skipGridProcessing = isGridInsidePolygon(grid, geoQuery);
+			featurePaths = getFeaturePaths(blockPath);
+		} else if (geoQuery.getPolygon() != null) {
+			skipGridProcessing = isGridInsidePolygon(grid, geoQuery);
+			if (!skipGridProcessing)
+				featurePaths = getFeaturePaths(blockPath);
+		} else if (geoQuery.getQuery() != null) {
+			featurePaths = getFeaturePaths(blockPath);
+		} else {
+			resultFiles.add(blockPath);
+			return resultFiles;
+		}
+
+		if (featurePaths == null) {
+			resultFiles.add(blockPath);
+			return resultFiles;
+		}
+
+		queryBitmap = skipGridProcessing ? null : queryBitmap;
+		int size = featurePaths.size();
+		int partition = java.lang.Math.max(size / numCores, MIN_GRID_POINTS);
+		int parallelism = java.lang.Math.min(size / partition, numCores);
+		if (parallelism > 1) { 
+			ExecutorService executor = Executors.newFixedThreadPool(parallelism);
+			List<ParallelQueryProcessor> queryProcessors = new ArrayList<>();
+			for (int i = 0; i < parallelism; i++) {
+				int from = i * partition;
+				int to = (i + 1 != parallelism) ? (i + 1) * partition : size;
+				List<String[]> subset = new ArrayList<>(featurePaths.subList(from, to));
+				ParallelQueryProcessor pqp = new ParallelQueryProcessor(subset, geoQuery.getQuery(), grid, queryBitmap,
+						pathPrefix + "-" + i);
+				queryProcessors.add(pqp);
+				executor.execute(pqp);
+			}
+			featurePaths.clear();
+			executor.shutdown();
+			executor.awaitTermination(10, TimeUnit.MINUTES);
+			for (ParallelQueryProcessor pqp : queryProcessors)
+				if (pqp.getStoragePath() != null)
+					resultFiles.add(pqp.getStoragePath());
+		} else {
+			ParallelQueryProcessor pqp = new ParallelQueryProcessor(featurePaths, geoQuery.getQuery(), grid,
+					queryBitmap, pathPrefix);
+			pqp.run(); // to avoid another thread creation
+			if (pqp.getStoragePath() != null)
+				resultFiles.add(pqp.getStoragePath());
+		}
+
+		return resultFiles;
+	}
 
 	public JSONArray getFeaturesJSON() {
 		return metadataGraph.getFeaturesJSON();

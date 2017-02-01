@@ -1,7 +1,5 @@
 package galileo.samples;
 
-import java.util.List;
-
 /*
 Copyright (c) 2014, Colorado State University
 All rights reserved.
@@ -56,11 +54,12 @@ public class QueryDemo implements MessageListener {
 	public void onMessage(GalileoMessage message) {
 		try {
 			QueryResponse response = (QueryResponse) wrapper.unwrap(message);
-			System.out.println(response.getResults().size() + " results received");
+			System.out.println(response.getJSONResults().toString());
+			/*System.out.println(response.getResults().size() + " results received");
 			List<List<String>> results = response.getResults();
 			for (int i = 0; i < Math.min(5, results.size()); i++) {
 				System.out.println(results.get(i));
-			}
+			}*/
 		} catch (Exception e) {
 			e.printStackTrace();
 		}

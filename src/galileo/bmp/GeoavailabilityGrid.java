@@ -99,6 +99,15 @@ public class GeoavailabilityGrid {
 							baseRange });
 		}
 	}
+	
+	public GeoavailabilityGrid(GeoavailabilityGrid grid){
+		this.baseRange = grid.baseRange;
+		this.baseHash = grid.baseHash;
+		this.width = grid.width;
+		this.height = grid.height;
+		this.xDegreesPerPixel = grid.xDegreesPerPixel;
+		this.yDegreesPerPixel = grid.yDegreesPerPixel;
+	}
 
 	/**
 	 * Adds a new point to this GeoavailabilityGrid.
@@ -284,6 +293,11 @@ public class GeoavailabilityGrid {
 				e.printStackTrace();
 			}
 		}
+		return this.bmp.and(queryBitmap).toArray();
+	}
+	
+	public int[] query(Bitmap queryBitmap){
+		applyUpdates();
 		return this.bmp.and(queryBitmap).toArray();
 	}
 
