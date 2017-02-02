@@ -1,6 +1,4 @@
-[![Galileo](docs/galileo.png)](http://galileo.cs.colostate.edu/)
+[![Galileo Continuum](docs/galileo-continuum.png =768x256)](http://galileo.cs.colostate.edu/)
 =======
 
-This is Kachikaran's development branch of the [Galileo Framework](http://galileo.cs.colostate.edu/). Galileo is a high-throughput distributed file system for multidimensional data, developed at the Colorado State University Computer Science Department. This branch has been forked from [Mathew Malensek's Development Branch](https://github.com/malensek/galileo)
-
-
+Galileo Continuum is a high-throughput distributed file system for spatio-temporal multidimensional data, developed at the Colorado State University Computer Science Department. This project is a fork of the original system developed by [Mathew Malensek](https://github.com/malensek/galileo) for geospatial datasets.
