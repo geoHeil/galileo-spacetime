@@ -163,9 +163,14 @@ public class GeospatialFileSystem extends FileSystem {
 		this.temporalType = TemporalType.fromType(temporalType);
 		this.numCores = Runtime.getRuntime().availableProcessors();
 
-		if (nodesPerGroup <= 0)
-			this.network = networkInfo;
-		else {
+		if (nodesPerGroup <= 0) {
+			this.network = new NetworkInfo();
+			List<GroupInfo> groups = networkInfo.getGroups();
+			TemporalHash th = new TemporalHash(this.temporalType);
+			int maxGroups = th.maxValue().intValue();
+			for (int i = 0; i < maxGroups; i++)
+				this.network.addGroup(groups.get(i));
+		} else {
 			this.network = new NetworkInfo();
 			GroupInfo groupInfo = null;
 			List<NodeInfo> allNodes = networkInfo.getAllNodes();
@@ -977,7 +982,7 @@ public class GeospatialFileSystem extends FileSystem {
 		int size = featurePaths.size();
 		int partition = java.lang.Math.max(size / numCores, MIN_GRID_POINTS);
 		int parallelism = java.lang.Math.min(size / partition, numCores);
-		if (parallelism > 1) { 
+		if (parallelism > 1) {
 			ExecutorService executor = Executors.newFixedThreadPool(parallelism);
 			List<ParallelQueryProcessor> queryProcessors = new ArrayList<>();
 			for (int i = 0; i < parallelism; i++) {
