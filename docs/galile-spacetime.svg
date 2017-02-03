@@ -9,14 +9,14 @@
    xmlns="http://www.w3.org/2000/svg"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-   width="768"
+   width="512"
    height="256"
-   viewBox="0 0 768 256"
+   viewBox="0 0 512 256"
    id="svg2"
    version="1.1"
    inkscape:version="0.91 r13725"
    sodipodi:docname="galile-continuum.svg"
-   inkscape:export-filename="C:\Users\JohnsonCharles\Desktop\galileo-continuum.png"
+   inkscape:export-filename="C:\Users\JohnsonCharles\Desktop\galileo-spacetime.png"
    inkscape:export-xdpi="300"
    inkscape:export-ydpi="300">
   <defs
@@ -76,7 +76,7 @@
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
      inkscape:zoom="1"
-     inkscape:cx="424.2518"
+     inkscape:cx="362.53237"
      inkscape:cy="146.05236"
      inkscape:document-units="px"
      inkscape:current-layer="layer1"
@@ -106,7 +106,7 @@
      transform="translate(0,-796.3622)">
     <g
        id="g4170"
-       transform="matrix(0.5,0,0,0.5,-5.49299,524.85962)">
+       transform="matrix(0.54345897,0,0,0.55950783,-28.026027,471.12711)">
       <g
          transform="translate(-46,126)"
          clip-path="url(#clipPath4457)"
@@ -140,24 +140,24 @@
     <text
        xml:space="preserve"
        style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:60px;line-height:120.00000477%;font-family:Arial;-inkscape-font-specification:'Arial, Bold';text-align:center;letter-spacing:0px;word-spacing:0px;writing-mode:lr-tb;text-anchor:middle;fill:#1d5479;fill-opacity:1;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
-       x="337.91089"
-       y="900.64941"
+       x="317.91089"
+       y="891.64941"
        id="text4146"
        sodipodi:linespacing="120%"><tspan
          sodipodi:role="line"
          id="tspan4148"
-         x="337.91089"
-         y="900.64941">GALILEO</tspan></text>
+         x="317.91089"
+         y="891.64941">GALILEO</tspan></text>
     <text
        xml:space="preserve"
-       style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:90px;line-height:120.00000477%;font-family:Arial;-inkscape-font-specification:'Arial, Bold';text-align:center;letter-spacing:0px;word-spacing:0px;writing-mode:lr-tb;text-anchor:middle;fill:#1d5479;fill-opacity:1;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
-       x="476.01959"
-       y="987.31207"
+       style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:condensed;font-size:90px;line-height:120.00000477%;font-family:'Agency FB';-inkscape-font-specification:'Agency FB, Bold Condensed';text-align:center;letter-spacing:0px;word-spacing:0px;writing-mode:lr-tb;text-anchor:middle;fill:#1d5479;fill-opacity:1;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       x="345.01959"
+       y="975.31207"
        id="text4146-0"
        sodipodi:linespacing="120%"><tspan
          sodipodi:role="line"
          id="tspan4168"
-         x="476.01959"
-         y="987.31207">CONTINUUM</tspan></text>
+         x="345.01959"
+         y="975.31207">Spacetime</tspan></text>
   </g>
 </svg>
