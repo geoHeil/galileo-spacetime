@@ -193,33 +193,36 @@ The examples below use features from the [NYC Yellow Taxi Data Dictionary](http:
   Map<String, StringBuffer> blockMap = new HashMap<>();
   Map<String, Float> minimumAmount = new HashMap<>();
   Map<String, Float> maximumAmount = new HashMap<>();
+  Map<String, Integer> numTrips = new HashMap<>();
   Map<String, Float> meanAmount = new HashMap<>();
   Map<String, Long> timestamps = new HashMap<>();
   Map<String, Coordinates> locations = new HashMap<>();
-  for(String record : records){
-    String[] fields = record.split(",");
-    String hash = GeoHash.encode(Float.parseFloat(fields[5]), Float.parseFloat(fields[4]), 6);
-    String blockKey = String.format("%s-%s", fields[0].split("\\s")[0], hash);
-    StringBuffer blockBuffer = blockMap.get(blockKey);
-    float totalAmount = Float.parseFloat(fields[16]);
-    if(blockBuffer == null){
-      blockBuffer = new StringBuffer();
-      blockMap.put(blockKey, blockBuffer);
-      blockBuffer.append(record);
-      minimumAmount.put(blockKey, totalAmount);
-      maximumAmount.put(blockKey, totalAmount);
-      meanAmount.put(blockKey, totalAmount);
-      timestamps.put(blockKey, sdf.parse(fields[0]).getTime());
-      locations.put(blockKey, new Coordinates(Float.parseFloat(fields[5]), Float.parseFloat(fields[4])));
-    } else {
-      blockBuffer.append("\n");
-      blockBuffer.append(record);
-      if(totalAmount < minimumAmount.get(blockKey))
-        minimumAmount.put(blockKey, totalAmount);
-      if(totalAmount > maximumAmount.get(blockKey))
-        maximumAmount.put(blockKey, totalAmount);
-      meanAmount.put(blockKey, totalAmount + meanAmount.get(blockKey));
-    }
+  for (String record : records) {
+      String[] fields = record.split(",");
+      String hash = GeoHash.encode(Float.parseFloat(fields[5]), Float.parseFloat(fields[4]), 6);
+      String blockKey = String.format("%s-%s", fields[0].split("\\s")[0], hash);
+      StringBuffer blockBuffer = blockMap.get(blockKey);
+      float totalAmount = Float.parseFloat(fields[16]);
+      if (blockBuffer == null) {      
+            blockBuffer = new StringBuffer();
+            blockMap.put(blockKey, blockBuffer);
+            blockBuffer.append(record);
+            minimumAmount.put(blockKey, totalAmount);
+            maximumAmount.put(blockKey, totalAmount);
+            meanAmount.put(blockKey, totalAmount);
+            timestamps.put(blockKey, sdf.parse(fields[0]).getTime());
+            numTrips.put(blockKey, 1);
+            locations.put(blockKey, new Coordinates(Float.parseFloat(fields[5]), Float.parseFloat(fields[4])));
+      } else {
+            blockBuffer.append("\n");
+            blockBuffer.append(record);
+            if (totalAmount < minimumAmount.get(blockKey))
+                  minimumAmount.put(blockKey, totalAmount);
+            if (totalAmount > maximumAmount.get(blockKey))
+                  maximumAmount.put(blockKey, totalAmount);
+            meanAmount.put(blockKey, totalAmount + meanAmount.get(blockKey));
+            numTrips.put(blockKey, numTrips.get(blockKey) + 1);
+      }
   }
   ```
 
@@ -227,21 +230,21 @@ The examples below use features from the [NYC Yellow Taxi Data Dictionary](http:
 
   ```java
   for (String blockKey : blockMap.keySet()) {
-    StringBuffer blockData = blockMap.get(blockKey);
-    TemporalProperties temporalProperties = new TemporalProperties(timestamps.get(blockKey));
-    SpatialProperties spatialProperties = new SpatialProperties(locations.get(blockKey));
-    FeatureSet attributes = new FeatureSet();
-    Metadata metadata = new Metadata();
-    attributes.put(new Feature("min_amount", minimumAmount.get(blockKey)));
-    attributes.put(new Feature("mean_amount", meanAmount.get(blockKey) / numTrips.get(blockKey)));
-    attributes.put(new Feature("max_amount", maximumAmount.get(blockKey)));
-    attributes.put(new Feature("num_trips", numTrips.get(blockKey)));
-    metadata.setName(blockKey);
-    metadata.setSpatialProperties(spatialProperties);
-    metadata.setTemporalProperties(temporalProperties);
-    metadata.setAttributes(attributes);
-    StorageRequest storageRequest = new StorageRequest(
-        new Block("nyc_yellow_taxi", metadata, blockData.toString().getBytes("UTF-8")));
-    connector.publishEvent(storageNode, storageRequest);
+      StringBuffer blockData = blockMap.get(blockKey);
+      TemporalProperties temporalProperties = new TemporalProperties(timestamps.get(blockKey));
+      SpatialProperties spatialProperties = new SpatialProperties(locations.get(blockKey));
+      FeatureSet attributes = new FeatureSet();
+      Metadata metadata = new Metadata();
+      attributes.put(new Feature("min_amount", minimumAmount.get(blockKey)));
+      attributes.put(new Feature("mean_amount", meanAmount.get(blockKey) / numTrips.get(blockKey)));
+      attributes.put(new Feature("max_amount", maximumAmount.get(blockKey)));
+      attributes.put(new Feature("num_trips", numTrips.get(blockKey)));
+      metadata.setName(blockKey);
+      metadata.setSpatialProperties(spatialProperties);
+      metadata.setTemporalProperties(temporalProperties);
+      metadata.setAttributes(attributes);
+      StorageRequest storageRequest = new StorageRequest(
+          new Block("nyc_yellow_taxi", metadata, blockData.toString().getBytes("UTF-8")));
+      connector.publishEvent(storageNode, storageRequest);
   }
   ```
