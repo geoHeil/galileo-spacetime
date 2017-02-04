@@ -28,7 +28,7 @@ public class Connector implements MessageListener {
 		this.messageRouter.addListener(this);
 	}
 
-	public Event sendMessage(NetworkDestination server, Event request) throws IOException, InterruptedException {
+	public synchronized Event sendMessage(NetworkDestination server, Event request) throws IOException, InterruptedException {
 		messageRouter.sendMessage(server, EventPublisher.wrapEvent(request));
 		logger.fine("Request sent. Waiting for response");
 		try {
@@ -38,6 +38,10 @@ public class Connector implements MessageListener {
 			throw e;
 		}
 		return response;
+	}
+	
+	public void publishEvent(NetworkDestination server, Event request) throws IOException {
+		messageRouter.sendMessage(server, EventPublisher.wrapEvent(request));
 	}
 
 	@Override

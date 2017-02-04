@@ -17,4 +17,4 @@ docs/api
 .DS_Store
 
 # Binaries
-lib/galileo-continuum-[0-9].[0-9].jar
+lib/galileo-spacetime-[0-9].[0-9].jar
