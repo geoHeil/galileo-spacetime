@@ -30,7 +30,7 @@ Galileo Spacetime is a high-throughput distributed file system for spatio-tempor
     $ mkgroups hostnames 4 
     $ mv *.group ../../config/network/
 
-Setup environment settings in your `.bashrc` and `.profile` or `.bash_profile`
+Setup environment settings in your `.bashrc` and `.profile` or `.bash_profile` and `source` it.
     
     $ vi .bashrc
     export GALILEO_HOME=/s/chopin/l/grad/jcharles/dev/galileo-spacetime
@@ -38,6 +38,8 @@ Setup environment settings in your `.bashrc` and `.profile` or `.bash_profile`
     export GALILEO_CONF=/s/chopin/l/grad/jcharles/dev/galileo-spacetime/config
     # This is where all the galileo filesystems are stored
     export GALILEO_ROOT=/s/$(hostname)/a/tmp/$(whoami)/galileo
+    
+    $ source .bashrc
     
 ## Setup on Google Compute Engine (Debian 8 Jessie)
 
@@ -81,8 +83,12 @@ Setup environment settings in your `.bashrc` and `.profile` or `.bash_profile`
         export GALILEO_ROOT=/tmp/galileo
         $ vi .profile
         # Add the same settings
+	   
+7. Source the new environment settings
+
+        $ source ~/.bashrc
         
-7. Copy the distribution to all other machines
+8. Copy the distribution to all other machines
 
         $ cd /home/jkachika
         $ galileo-spacetime/bin/galileo-copy.sh hostnames /home/jkachika/galileo-spacetime /home/jkachika 
@@ -150,8 +156,8 @@ The examples below use features from the [NYC Yellow Taxi Data Dictionary](http:
 
   FilesystemRequest fsRequest = new FilesystemRequest("nyc_yellow_taxi", FilesystemAction.CREATE, featureList, spatialHint);
   fsRequest.setNodesPerGroup(2);
-	fsRequest.setPrecision(6);
-	fsRequest.setTemporalType(TemporalType.DAY_OF_MONTH);
+  fsRequest.setPrecision(6);
+  fsRequest.setTemporalType(TemporalType.DAY_OF_MONTH);
 
   NetworkDestination storageNode = new NetworkDestination("harrisburg.cs.colostate.edu", 5634);
   connector.publishEvent(storageNode, fsRequest);
