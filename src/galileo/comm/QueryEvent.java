@@ -139,7 +139,7 @@ public class QueryEvent implements Event {
 	}
 
 	public Query getMetadataQuery() {
-		return this.featureQuery;
+		return this.metadataQuery;
 	}
 
 	public String getTime() {

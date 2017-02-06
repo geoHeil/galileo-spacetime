@@ -102,6 +102,10 @@ public class QueryResponse implements Event {
 		return this.jsonResults;
 	}
 	
+	public JSONArray getHeader(){
+		return this.header;
+	}
+	
 	public int getBlockCount(){
 		if(this.jsonResults.has("totalNumPaths")){
 			return this.jsonResults.getInt("totalNumPaths");

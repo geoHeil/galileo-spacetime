@@ -584,13 +584,7 @@ public class GeospatialFileSystem extends FileSystem {
 	}
 
 	private Query queryIntersection(Query q1, Query q2) {
-		if (q1 == null && q2 == null)
-			return null;
-		else if (q1 != null && q2 == null)
-			return q1;
-		else if (q1 == null && q2 != null)
-			return q2;
-		else {
+		if (q1 != null && q2 != null) {
 			Query query = new Query();
 			for (Operation q1Op : q1.getOperations()) {
 				for (Operation q2Op : q2.getOperations()) {
@@ -599,7 +593,14 @@ public class GeospatialFileSystem extends FileSystem {
 					query.addOperation(op);
 				}
 			}
+			logger.info(query.toString());
 			return query;
+		} else if (q1 != null) {
+			return q1;
+		} else if (q2 != null) {
+			return q2;
+		} else {
+			return null;
 		}
 	}
 
