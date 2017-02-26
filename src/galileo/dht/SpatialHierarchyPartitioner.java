@@ -137,7 +137,7 @@ public class SpatialHierarchyPartitioner extends Partitioner<Metadata> {
 		if (sp.hasRange() && sp.getSpatialRange().hasPolygon()) {
 			List<Coordinates> polygon = sp.getSpatialRange().getPolygon();
 			// Geohash precision for spatial ring is 2.
-			String[] hashes = GeoHash.getIntersectingGeohashes(polygon, 2);
+			String[] hashes = GeoHash.getIntersectingGeohashes(polygon);
 			for (String hash : hashes) {
 				Metadata metadata = new Metadata();
 				metadata.setSpatialProperties(new SpatialProperties(GeoHash.decodeHash(hash)));

@@ -39,6 +39,7 @@ import java.util.Set;
 import galileo.dataset.Coordinates;
 import galileo.dataset.Point;
 import galileo.dataset.SpatialRange;
+import galileo.dht.Partitioner;
 
 /**
  * This class provides an implementation of the GeoHash (http://www.geohash.org)
@@ -51,7 +52,8 @@ public class GeoHash {
 	public final static byte BITS_PER_CHAR = 5;
 	public final static int LATITUDE_RANGE = 90;
 	public final static int LONGITUDE_RANGE = 180;
-	public final static int MAX_PRECISION = 30; //6 character precision = 30 (~ 1.2km x 0.61km)
+	public final static int MAX_PRECISION = 30; // 6 character precision = 30 (~
+												// 1.2km x 0.61km)
 
 	/**
 	 * This character array maps integer values (array indices) to their GeoHash
@@ -72,6 +74,92 @@ public class GeoHash {
 		for (int i = 0; i < charMap.length; ++i) {
 			charLookupTable.put(charMap[i], i);
 		}
+	}
+
+	private String binaryHash;
+	private Rectangle2D bounds;
+
+	public GeoHash() {
+		this("");
+	}
+
+	public GeoHash(String binaryString) {
+		this.binaryHash = binaryString;
+		ArrayList<Boolean> bits = new ArrayList<>();
+		for (char bit : this.binaryHash.toCharArray())
+			bits.add(bit == '0' ? false : true);
+		float[] longitude = decodeBits(bits, false);
+		float[] latitude = decodeBits(bits, true);
+		SpatialRange range = new SpatialRange(latitude[0], latitude[1], longitude[0], longitude[1]);
+		Pair<Coordinates, Coordinates> coordsPair = range.get2DCoordinates();
+		Point<Integer> upLeft = coordinatesToXY(coordsPair.a);
+		Point<Integer> lowRight = coordinatesToXY(coordsPair.b);
+		this.bounds = new Rectangle(upLeft.X(), upLeft.Y(), lowRight.X() - upLeft.X(), lowRight.Y() - upLeft.Y());
+	}
+
+	public int getPrecision() {
+		return this.binaryHash.length();
+	}
+
+	public String getBinaryHash() {
+		return this.binaryHash;
+	}
+
+	public String[] getValues(int precision) {
+		String[] values = null;
+		String hash = "";
+		for (int i = 0; i < this.binaryHash.length(); i += 5) {
+			String hashChar = this.binaryHash.substring(i, java.lang.Math.min(i + 5, this.binaryHash.length()));
+			if (hashChar.length() == 5)
+				hash += charMap[Integer.parseInt(hashChar, 2)];
+			else {
+				String beginHash = hashChar;
+				String endHash = hashChar;
+				while (beginHash.length() < BITS_PER_CHAR) {
+					beginHash += "0";
+					endHash += "1";
+				}
+				values = new String[2];
+				values[0] = hash + charMap[Integer.parseInt(beginHash, 2)];
+				values[1] = hash + charMap[Integer.parseInt(endHash, 2)];
+				while (values[0].length() < precision){
+					values[0] += "0";
+					values[1] += "z";
+				}
+			}
+		}
+		if (values == null){
+			if (hash.length() < precision){
+				String beginHash = hash;
+				String endHash = hash;
+				while (beginHash.length() < precision){
+					beginHash += "0";
+					endHash += "z";
+				}
+				values = new String[] { beginHash, endHash };
+			} else {
+				values = new String[] {hash};
+			}
+		}
+		return values;
+	}
+
+	public Rectangle2D getRectangle() {
+		return this.bounds;
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (obj instanceof GeoHash) {
+			GeoHash other = (GeoHash) obj;
+			return this.binaryHash.equals(other.binaryHash);
+		}
+		return false;
+	}
+
+	@Override
+	public int hashCode() {
+		return this.binaryHash.hashCode();
 	}
 
 	/**
@@ -280,7 +368,8 @@ public class GeoHash {
 	/**
 	 * @param coordinates
 	 *            - latitude and longitude values
-	 * @return Point - x, y pair obtained from a geohash precision of 12. x,y values range from [0, 4096)
+	 * @return Point - x, y pair obtained from a geohash precision of 12. x,y
+	 *         values range from [0, 4096)
 	 */
 	public static Point<Integer> coordinatesToXY(Coordinates coords) {
 		int width = 1 << MAX_PRECISION;
@@ -296,17 +385,18 @@ public class GeoHash {
 		return new Coordinates(90 - y * 180f / width, x * 360f / width - 180f);
 	}
 
-	public static String[] getIntersectingGeohashes(List<Coordinates> polygon, int precision) {
+	public static String[] getIntersectingGeohashes(List<Coordinates> polygon) {
 		Set<String> hashes = new HashSet<String>();
 		Polygon geometry = new Polygon();
 		for (Coordinates coords : polygon) {
 			Point<Integer> point = coordinatesToXY(coords);
 			geometry.addPoint(point.X(), point.Y());
 		}
-		//center may not lie inside polygon so start with any vertex of the polygon
+		// center may not lie inside polygon so start with any vertex of the
+		// polygon
 		Coordinates spatialCenter = polygon.get(0);
 		Rectangle2D box = geometry.getBounds2D();
-		String geohash = encode(spatialCenter, precision);
+		String geohash = encode(spatialCenter, Partitioner.SPATIAL_PRECISION);
 		Queue<String> hashQue = new LinkedList<String>();
 		Set<String> computedHashes = new HashSet<String>();
 		hashQue.offer(geohash);
@@ -322,7 +412,7 @@ public class GeoHash {
 			if (hash.equals(geohash) && hashRect.contains(box)) {
 				hashes.add(hash);
 				break;
-			} 
+			}
 			if (geometry.intersects(hashRect)) {
 				hashes.add(hash);
 				String[] neighbors = getNeighbours(hash);
@@ -401,5 +491,31 @@ public class GeoHash {
 			}
 		}
 		return bits;
+	}
+
+	public static Polygon buildAwtPolygon(List<Coordinates> geometry) {
+		Polygon polygon = new Polygon();
+		for (Coordinates coords : geometry) {
+			Point<Integer> point = coordinatesToXY(coords);
+			polygon.addPoint(point.X(), point.Y());
+		}
+		return polygon;
+	}
+
+	public static void getGeohashPrefixes(Polygon polygon, GeoHash gh, int precision, Set<GeoHash> intersections) {
+		if (gh.getPrecision() >= precision) {
+			intersections.add(gh);
+		} else {
+			if (polygon.contains(gh.getRectangle())) {
+				intersections.add(gh);
+			} else {
+				GeoHash leftGH = new GeoHash(gh.getBinaryHash() + "0");
+				GeoHash rightGH = new GeoHash(gh.getBinaryHash() + "1");
+				if (polygon.intersects(leftGH.getRectangle()))
+					getGeohashPrefixes(polygon, leftGH, precision, intersections);
+				if (polygon.intersects(rightGH.getRectangle()))
+					getGeohashPrefixes(polygon, rightGH, precision, intersections);
+			}
+		}
 	}
 }

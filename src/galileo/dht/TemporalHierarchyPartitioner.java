@@ -34,7 +34,7 @@ public class TemporalHierarchyPartitioner extends Partitioner<Metadata> {
 	private ConstrainedGeohash nodeHash;
 	private Map<BigInteger, BalancedHashRing<Metadata>> nodeHashRings;
 	private Map<BigInteger, Map<BigInteger, NodeInfo>> nodePositions;
-
+	
 	public TemporalHierarchyPartitioner(StorageNode storageNode, NetworkInfo network, int temporalHashType)
 			throws PartitionException, HashException, HashTopologyException {
 
@@ -121,7 +121,7 @@ public class TemporalHierarchyPartitioner extends Partitioner<Metadata> {
 					//Spatial range
 					logger.info("Polygon - " + polygon);
 					// Geohash precision for spatial ring is 2.
-					String[] hashes = GeoHash.getIntersectingGeohashes(polygon, 2);
+					String[] hashes = GeoHash.getIntersectingGeohashes(polygon);
 					logger.info("intersecting geohashes - " + Arrays.toString(hashes));
 					Metadata metadata = new Metadata();
 					for (BigInteger position : positions) {
@@ -151,7 +151,7 @@ public class TemporalHierarchyPartitioner extends Partitioner<Metadata> {
 				HashRing<Metadata> nodeRing = nodeHashRings.get(groupPosition);
 				if (sp.hasRange() && sp.getSpatialRange().hasPolygon()) {
 					List<Coordinates> polygon = sp.getSpatialRange().getPolygon();
-					String[] hashes = GeoHash.getIntersectingGeohashes(polygon, 2);
+					String[] hashes = GeoHash.getIntersectingGeohashes(polygon);
 					Metadata metadata = new Metadata();
 					for (String hash : hashes) {
 						metadata.setSpatialProperties(new SpatialProperties(GeoHash.decodeHash(hash)));

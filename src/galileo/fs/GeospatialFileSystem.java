@@ -38,9 +38,11 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -133,6 +135,7 @@ public class GeospatialFileSystem extends FileSystem {
 	private TemporalProperties earliestTime;
 	private String latestSpace;
 	private String earliestSpace;
+	private Set<String> geohashIndex;
 
 	private static final String TEMPORAL_YEAR_FEATURE = "x__year__x";
 	private static final String TEMPORAL_MONTH_FEATURE = "x__month__x";
@@ -147,6 +150,7 @@ public class GeospatialFileSystem extends FileSystem {
 		super(storageDirectory, name, ignoreIfPresent);
 
 		this.nodesPerGroup = nodesPerGroup;
+		this.geohashIndex = new HashSet<>();
 		if (featureList != null) {
 			this.featureList = new ArrayList<>();
 			for (String nameType : featureList.split(",")) {
@@ -278,6 +282,7 @@ public class GeospatialFileSystem extends FileSystem {
 		state.put("storageRoot", this.storageRoot);
 		state.put("precision", this.geohashPrecision);
 		state.put("nodesPerGroup", this.nodesPerGroup);
+		state.put("geohashIndex", this.geohashIndex);
 		StringBuffer features = new StringBuffer();
 		if (this.featureList != null) {
 			for (Pair<String, FeatureType> pair : this.featureList)
@@ -309,6 +314,7 @@ public class GeospatialFileSystem extends FileSystem {
 		String storageRoot = state.getString("storageRoot");
 		int geohashPrecision = state.getInt("precision");
 		int nodesPerGroup = state.getInt("nodesPerGroup");
+		JSONArray geohashIndices = state.getJSONArray("geohashIndex");
 		String featureList = null;
 		if (state.get("featureList") != JSONObject.NULL)
 			featureList = state.getString("featureList");
@@ -326,6 +332,10 @@ public class GeospatialFileSystem extends FileSystem {
 		gfs.latestTime = (state.get("latestTime") != JSONObject.NULL)
 				? new TemporalProperties(state.getLong("latestTime")) : null;
 		gfs.latestSpace = (state.get("latestSpace") != JSONObject.NULL) ? state.getString("latestSpace") : null;
+		Set<String> geohashIndex = new HashSet<String>();
+		for (int i = 0; i < geohashIndices.length(); i++)
+			geohashIndex.add(geohashIndices.getString(i));
+		gfs.geohashIndex = geohashIndex;
 		return gfs;
 	}
 
@@ -428,7 +438,8 @@ public class GeospatialFileSystem extends FileSystem {
 		newfs.put(new Feature(TEMPORAL_MONTH_FEATURE, temporalFeature[1]));
 		newfs.put(new Feature(TEMPORAL_DAY_FEATURE, temporalFeature[2]));
 		newfs.put(new Feature(TEMPORAL_HOUR_FEATURE, temporalFeature[3]));
-		newfs.put(new Feature(SPATIAL_FEATURE, getSpatialString(meta.getSpatialProperties())));
+		newfs.put(new Feature(SPATIAL_FEATURE, geohash));
+
 		for (Feature feature : meta.getAttributes())
 			newfs.put(feature);
 		meta.setAttributes(newfs);
@@ -460,6 +471,8 @@ public class GeospatialFileSystem extends FileSystem {
 			this.earliestTime = meta.getTemporalProperties();
 			this.earliestSpace = geohash;
 		}
+
+		this.geohashIndex.add(geohash.substring(0, Partitioner.SPATIAL_PRECISION));
 
 		return blockPath;
 	}
@@ -604,30 +617,105 @@ public class GeospatialFileSystem extends FileSystem {
 		}
 	}
 
+	private class ParallelQueryEvaluator implements Runnable {
+		private List<Operation> operations;
+		private List<Path<Feature, String>> resultPaths;
+
+		public ParallelQueryEvaluator(List<Operation> operations) {
+			this.operations = operations;
+		}
+
+		public List<Path<Feature, String>> getResults() {
+			return this.resultPaths;
+		}
+
+		@Override
+		public void run() {
+			Query query = new Query();
+			query.addAllOperations(operations);
+			this.resultPaths = metadataGraph.evaluateQuery(query);
+		}
+	}
+
+	private List<Path<Feature, String>> executeParallelQuery(Query finalQuery) throws InterruptedException {
+		logger.info("Query: " + finalQuery.toString());
+		List<Path<Feature, String>> paths = new ArrayList<>();
+		List<Operation> operations = finalQuery.getOperations();
+		if (operations.size() > 0) {
+			if (operations.size() > numCores) {
+				int subsetSize = operations.size() / numCores;
+				for (int i = 0; i < numCores; i++) {
+					operations.subList(i, (i + 1) * subsetSize);
+				}
+				int size = operations.size();
+				ExecutorService executor = Executors.newFixedThreadPool(numCores);
+				List<ParallelQueryEvaluator> queryEvaluators = new ArrayList<>();
+				for (int i = 0; i < numCores; i++) {
+					int from = i * subsetSize;
+					int to = (i + 1 != numCores) ? (i + 1) * subsetSize : size;
+					List<Operation> subset = new ArrayList<>(operations.subList(from, to));
+					ParallelQueryEvaluator pqe = new ParallelQueryEvaluator(subset);
+					queryEvaluators.add(pqe);
+					executor.execute(pqe);
+				}
+				operations.clear();
+				executor.shutdown();
+				boolean termination = executor.awaitTermination(10, TimeUnit.MINUTES);
+				if (!termination)
+					logger.severe("Query failed to process in 10 minutes");
+				paths = new ArrayList<>();
+				for (ParallelQueryEvaluator pqe : queryEvaluators)
+					if (pqe.getResults() != null)
+						paths.addAll(pqe.getResults());
+			} else {
+				paths = metadataGraph.evaluateQuery(finalQuery);
+			}
+		}
+		return paths;
+	}
+
 	public Map<String, List<String>> listBlocks(String temporalProperties, List<Coordinates> spatialProperties,
-			Query metaQuery, boolean group) {
+			Query metaQuery, boolean group) throws InterruptedException {
 		Map<String, List<String>> blockMap = new HashMap<String, List<String>>();
 		String space = null;
 		List<Path<Feature, String>> paths = null;
 		List<String> blocks = new ArrayList<String>();
 		if (temporalProperties != null && spatialProperties != null) {
 			SpatialProperties sp = new SpatialProperties(new SpatialRange(spatialProperties));
+			List<Coordinates> geometry = sp.getSpatialRange().hasPolygon() ? sp.getSpatialRange().getPolygon()
+					: sp.getSpatialRange().getBounds();
 			space = getSpatialString(sp);
-			String[] geohashes = new String[] {};
-			if (sp.hasRange()) {
-				geohashes = sp.getSpatialRange().hasPolygon()
-						? GeoHash.getIntersectingGeohashes(sp.getSpatialRange().getPolygon(), this.geohashPrecision)
-						: GeoHash.getIntersectingGeohashes(sp.getSpatialRange().getBounds(), this.geohashPrecision);
-			}
-
+			List<String> hashLocations = new ArrayList<>(Arrays.asList(GeoHash.getIntersectingGeohashes(geometry)));
+			hashLocations.retainAll(this.geohashIndex);
+			logger.info("baseLocations: " + hashLocations);
 			Query query = new Query();
 			List<Expression> temporalExpressions = buildTemporalExpression(temporalProperties);
-			for (String geohash : geohashes) {
-				Operation op = new Operation(temporalExpressions);
-				op.addExpressions(new Expression(Operator.EQUAL, new Feature(SPATIAL_FEATURE, geohash)));
-				query.addOperation(op);
+			Polygon polygon = GeoHash.buildAwtPolygon(geometry);
+			for (String geohash : hashLocations) {
+				Set<GeoHash> intersections = new HashSet<>();
+				String pattern = "%" + (geohash.length() * GeoHash.BITS_PER_CHAR) + "s";
+				String binaryHash = String.format(pattern, Long.toBinaryString(GeoHash.hashToLong(geohash)));
+				GeoHash.getGeohashPrefixes(polygon, new GeoHash(binaryHash.replace(" ", "0")),
+						this.geohashPrecision * GeoHash.BITS_PER_CHAR, intersections);
+				logger.info("baseHash: " + geohash + ", intersections: " + intersections.size());
+				for (GeoHash gh : intersections) {
+					String[] hashRange = gh.getValues(this.geohashPrecision);
+					if (hashRange != null) {
+						Operation op = new Operation(temporalExpressions);
+						if (hashRange.length == 1)
+							op.addExpressions(
+									new Expression(Operator.EQUAL, new Feature(SPATIAL_FEATURE, hashRange[0])));
+						else {
+							op.addExpressions(
+									new Expression(Operator.GREATEREQUAL, new Feature(SPATIAL_FEATURE, hashRange[0])));
+							op.addExpressions(
+									new Expression(Operator.LESSEQUAL, new Feature(SPATIAL_FEATURE, hashRange[1])));
+						}
+						query.addOperation(op);
+					}
+				}
 			}
-			paths = metadataGraph.evaluateQuery(queryIntersection(query, metaQuery));
+			paths = executeParallelQuery(queryIntersection(query, metaQuery));
 		} else if (temporalProperties != null) {
 			List<Expression> temporalExpressions = buildTemporalExpression(temporalProperties);
 			Query query = new Query(
@@ -635,21 +723,42 @@ public class GeospatialFileSystem extends FileSystem {
 			paths = metadataGraph.evaluateQuery(queryIntersection(query, metaQuery));
 		} else if (spatialProperties != null) {
 			SpatialProperties sp = new SpatialProperties(new SpatialRange(spatialProperties));
-			String[] geohashes = new String[] {};
-			if (sp.hasRange()) {
-				geohashes = sp.getSpatialRange().hasPolygon()
-						? GeoHash.getIntersectingGeohashes(sp.getSpatialRange().getPolygon(), this.geohashPrecision)
-						: GeoHash.getIntersectingGeohashes(sp.getSpatialRange().getBounds(), this.geohashPrecision);
-			}
+			List<Coordinates> geometry = sp.getSpatialRange().hasPolygon() ? sp.getSpatialRange().getPolygon()
+					: sp.getSpatialRange().getBounds();
 			space = getSpatialString(sp);
+			List<String> hashLocations = new ArrayList<>(Arrays.asList(GeoHash.getIntersectingGeohashes(geometry)));
+			hashLocations.retainAll(this.geohashIndex);
+			logger.info("baseLocations: " + hashLocations);
 			Query query = new Query();
-			for (String geohash : geohashes)
-				query.addOperation(
-						new Operation(new Expression(Operator.EQUAL, new Feature(SPATIAL_FEATURE, geohash))));
-			paths = metadataGraph.evaluateQuery(queryIntersection(query, metaQuery));
+			Polygon polygon = GeoHash.buildAwtPolygon(geometry);
+			for (String geohash : hashLocations) {
+				Set<GeoHash> intersections = new HashSet<>();
+				String pattern = "%" + (geohash.length() * GeoHash.BITS_PER_CHAR) + "s";
+				String binaryHash = String.format(pattern, Long.toBinaryString(GeoHash.hashToLong(geohash)));
+				GeoHash.getGeohashPrefixes(polygon, new GeoHash(binaryHash.replace(" ", "0")),
+						this.geohashPrecision * GeoHash.BITS_PER_CHAR, intersections);
+				logger.info("baseHash: " + geohash + ", intersections: " + intersections.size());
+				for (GeoHash gh : intersections) {
+					String[] hashRange = gh.getValues(this.geohashPrecision);
+					if (hashRange != null) {
+						Operation op = new Operation();
+						if (hashRange.length == 1)
+							op.addExpressions(
+									new Expression(Operator.EQUAL, new Feature(SPATIAL_FEATURE, hashRange[0])));
+						else {
+							op.addExpressions(
+									new Expression(Operator.GREATEREQUAL, new Feature(SPATIAL_FEATURE, hashRange[0])));
+							op.addExpressions(
+									new Expression(Operator.LESSEQUAL, new Feature(SPATIAL_FEATURE, hashRange[1])));
+						}
+						query.addOperation(op);
+					}
+				}
+			}
+			paths = executeParallelQuery(queryIntersection(query, metaQuery));
 		} else {
 			// non-chronal non-spatial
-			paths = (metaQuery == null) ? metadataGraph.getAllPaths() : metadataGraph.evaluateQuery(metaQuery);
+			paths = (metaQuery == null) ? metadataGraph.getAllPaths() : executeParallelQuery(metaQuery);
 		}
 		for (Path<Feature, String> path : paths) {
 			String groupKey = group ? getGroupKey(path, space) : getSpaceKey(path);
