@@ -50,7 +50,7 @@ public class NetworkInfo {
     public List<NodeInfo> getAllNodes() {
         List<NodeInfo> nodeList = new ArrayList<>();
         for (GroupInfo group : groups) {
-            List<NodeInfo> groupNodes = group.getAllNodes();
+            List<NodeInfo> groupNodes = group.getNodes();
             nodeList.addAll(groupNodes);
         }
 

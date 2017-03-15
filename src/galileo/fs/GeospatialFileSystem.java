@@ -167,29 +167,23 @@ public class GeospatialFileSystem extends FileSystem {
 		this.temporalType = TemporalType.fromType(temporalType);
 		this.numCores = Runtime.getRuntime().availableProcessors();
 
-		if (nodesPerGroup <= 0) {
-			this.network = new NetworkInfo();
-			List<GroupInfo> groups = networkInfo.getGroups();
-			TemporalHash th = new TemporalHash(this.temporalType);
-			int maxGroups = th.maxValue().intValue();
-			for (int i = 0; i < maxGroups; i++)
-				this.network.addGroup(groups.get(i));
-		} else {
-			this.network = new NetworkInfo();
-			GroupInfo groupInfo = null;
-			List<NodeInfo> allNodes = networkInfo.getAllNodes();
-			Collections.sort(allNodes);
-			TemporalHash th = new TemporalHash(this.temporalType);
-			int maxGroups = th.maxValue().intValue();
-			for (int i = 0; i < allNodes.size(); i++) {
-				if (this.network.getGroups().size() < maxGroups) {
-					if (i % nodesPerGroup == 0) {
-						groupInfo = new GroupInfo(String.valueOf(i / nodesPerGroup));
-						groupInfo.addNode(allNodes.get(i));
-						this.network.addGroup(groupInfo);
-					} else {
-						groupInfo.addNode(allNodes.get(i));
-					}
+		if (nodesPerGroup <= 0) 
+			nodesPerGroup = networkInfo.getGroups().get(0).getSize();
+		
+		this.network = new NetworkInfo();
+		GroupInfo groupInfo = null;
+		List<NodeInfo> allNodes = networkInfo.getAllNodes();
+		Collections.sort(allNodes);
+		TemporalHash th = new TemporalHash(this.temporalType);
+		int maxGroups = th.maxValue().intValue();
+		for (int i = 0; i < allNodes.size(); i++) {
+			if (this.network.getGroups().size() < maxGroups) {
+				if (i % nodesPerGroup == 0) {
+					groupInfo = new GroupInfo(String.valueOf(i / nodesPerGroup));
+					groupInfo.addNode(allNodes.get(i));
+					this.network.addGroup(groupInfo);
+				} else {
+					groupInfo.addNode(allNodes.get(i));
 				}
 			}
 		}

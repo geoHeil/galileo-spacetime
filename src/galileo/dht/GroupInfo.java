@@ -52,14 +52,12 @@ public class GroupInfo {
         return nodes;
     }
 
-    public List<NodeInfo> getAllNodes() {
-        List<NodeInfo> nodeList = new ArrayList<>();
-        nodeList.addAll(nodes);
-        return nodeList;
-    }
-
     public String getName() {
         return name;
+    }
+    
+    public int getSize(){
+    	return this.nodes.size();
     }
 
     @Override
